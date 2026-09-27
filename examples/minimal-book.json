@@ -1,0 +1,26 @@
+{
+  "format": "englishreader.book.v1",
+  "title": "A Small Beginning",
+  "author": "原创格式示例",
+  "chapters": [
+    {
+      "id": "chapter-1",
+      "title": "The Window",
+      "paragraphs": [
+        {
+          "id": "p1",
+          "sentences": [
+            {"en": "The rain stopped.", "zh": "雨停了。"},
+            {"en": "She opened the window. The room filled with cool air.", "zh": "她推开窗，凉爽的空气涌进屋里。"}
+          ]
+        },
+        {
+          "id": "p2",
+          "sentences": [
+            {"en": "A new day was waiting for her.", "zh": null}
+          ]
+        }
+      ]
+    }
+  ]
+}
