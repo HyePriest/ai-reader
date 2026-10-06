@@ -27,6 +27,7 @@ import kotlinx.coroutines.withContext
 
 @Composable
 internal fun BookImportPreview(book: Book, onDismiss: () -> Unit, onSave: suspend (Book) -> Unit) {
+    val sourceDirectory = LocalContext.current.filesDir
     var title by remember { mutableStateOf(book.title) }
     var chapterIndex by remember { mutableIntStateOf(0) }
     var reviewed by remember { mutableStateOf(false) }
@@ -42,6 +43,7 @@ internal fun BookImportPreview(book: Book, onDismiss: () -> Unit, onSave: suspen
         val chapter = book.chapters[chapterIndex]
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             itemsIndexed(chapter.paragraphs) { _, p ->
+                if (p.pdfPage != null) PdfPageImage(book.id, p.pdfPage, sourceDirectory)
                 Text(p.text)
                 chapter.alignments.filter { it.ranges.firstOrNull()?.paragraph == p.id }.forEach { a ->
                     Text(a.chinese, color = MaterialTheme.colorScheme.primary, fontSize = 14.sp)
@@ -85,7 +87,7 @@ internal fun DirectChineseImportActions(book: Book, chapterIndex: Int, onUpdate:
     Button(enabled = !busy, onClick = { picker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) {
         Text(if (busy) "正在读取…" else "导入中文文件")
     }
-    Text("直接选择中文 EPUB、HTML、TXT 或双语书籍 JSON；在手机上配对，无须导出英文。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text("直接选择有文字正文的中文 EPUB、PDF、MOBI / AZW3、TXT、FB2、DOCX、RTF 或双语书籍 JSON；在手机上配对，无须导出英文。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     TextButton(enabled = !busy, onClick = { undo = true }) { Text("撤销最近一次中文修改", fontSize = 12.sp) }
     session?.let { s -> ChinesePairingDialog(s.book, s.document, chapterIndex, initialPlans = s.plans, matchingMessage = s.matchingMessage, onDismiss = { session = null }, onSave = { result ->
         require(book == s.book) { "书籍已变化，请重新导入中文" }

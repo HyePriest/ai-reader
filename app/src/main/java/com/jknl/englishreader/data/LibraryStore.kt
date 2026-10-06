@@ -10,6 +10,7 @@ import java.io.File
 
 /** Versioned, atomic, per-book files. Keep migration independent of the UI. */
 class LibraryStore(private val context: Context) {
+    init { com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(context.applicationContext) }
     private val directory = File(context.filesDir, "library").apply { mkdirs() }
     private val preferences = context.getSharedPreferences("reader", Context.MODE_PRIVATE)
     // Keep recent immutable books ready when returning from the shelf; saving replaces the entry.
@@ -47,8 +48,23 @@ class LibraryStore(private val context: Context) {
             .sortedByDescending { it.importedAt }
     }
 
-    fun import(uri: Uri): Book = context.contentResolver.openInputStream(uri)?.use { BookFiles.read(it, fileName(uri)) }
-        ?: error("无法打开选中的文件")
+    fun import(uri: Uri): Book {
+        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readLimited(32 * 1024 * 1024) }
+            ?: error("无法打开选中的文件")
+        val book = BookFiles.read(bytes.inputStream(), fileName(uri)) { id, cover ->
+            val covers = BookCovers(context)
+            if (!covers.file(id).exists()) runCatching { covers.save(id, cover) }
+        }
+        if (book.sourceFormat == "pdf") {
+            val source = AtomicFile(File(directory, "${book.id}.pdf"))
+            val output = source.startWrite()
+            try { output.write(bytes); source.finishWrite(output) }
+            catch (e: Exception) { source.failWrite(output); throw e }
+            val covers = BookCovers(context)
+            if (!covers.file(book.id).exists()) runCatching { covers.savePdf(book.id, File(directory, "${book.id}.pdf")) }
+        }
+        return book
+    }
 
     fun sample(): Book = context.assets.open("a-window-in-the-rain.epub").use { EpubImporter().read(it) }
 
@@ -122,13 +138,19 @@ class LibraryStore(private val context: Context) {
 
     fun encode(book: Book): String = JSONObject().apply {
         put("schema", 1); put("id", book.id); put("title", book.title); put("author", book.author); put("importedAt", book.importedAt)
+        put("sourceFormat", book.sourceFormat)
+        put("contents", array(book.contents.map { e -> JSONObject().put("title", e.title).put("chapter", e.chapter)
+            .put("paragraph", e.paragraph).put("character", e.character).put("depth", e.depth) }))
         put("chapters", array(book.chapters.map { chapter -> JSONObject().apply {
             put("id", chapter.id); put("title", chapter.title)
             put("paragraphs", array(chapter.paragraphs.map { p -> JSONObject().apply {
                 put("id", p.id); put("text", p.text); put("heading", p.heading)
+                p.pdfPage?.let { put("pdfPage", it) }
                 put("marks", array(p.marks.map { m -> JSONObject().put("start", m.start).put("end", m.end).put("kind", m.kind) }))
                 put("units", array(p.units.map { u -> JSONObject().put("start", u.start).put("end", u.end) }))
                 put("notes", array(p.notes.map { n -> JSONObject().put("start", n.start).put("end", n.end).put("term", n.term).put("meaning", n.meaning) }))
+                put("annotations", array(p.annotations.map { n -> JSONObject().put("start", n.start).put("end", n.end)
+                    .put("text", n.text).put("title", n.title).put("source", n.source) }))
             } }))
             put("alignments", array(chapter.alignments.map { a -> JSONObject().apply {
                 put("id", a.id); put("chinese", a.chinese); put("source", a.source)
@@ -146,12 +168,16 @@ class LibraryStore(private val context: Context) {
                     Paragraph(p.getString("id"), p.getString("text"), p.getBoolean("heading"), p.getJSONArray("marks").objects().map { m ->
                         Mark(m.getInt("start"), m.getInt("end"), m.getString("kind"))
                     }, (p.optJSONArray("units") ?: JSONArray()).objects().map { u -> ReadingUnit(u.getInt("start"), u.getInt("end")) },
-                        (p.optJSONArray("notes") ?: JSONArray()).objects().map { n -> WordNote(n.getInt("start"), n.getInt("end"), n.getString("term"), n.getString("meaning")) })
+                        (p.optJSONArray("notes") ?: JSONArray()).objects().map { n -> WordNote(n.getInt("start"), n.getInt("end"), n.getString("term"), n.getString("meaning")) },
+                        (p.optJSONArray("annotations") ?: JSONArray()).objects().map { n -> BookAnnotation(n.getInt("start"), n.getInt("end"), n.getString("text"), n.optString("title", ""), n.optString("source", "")) },
+                        if (p.has("pdfPage")) p.getInt("pdfPage").also { require(it in 0..2999) } else null)
                 }, c.getJSONArray("alignments").objects().map { a ->
                     Alignment(a.getString("id"), a.getJSONArray("ranges").objects().map { r ->
                         SourceRange(r.getString("paragraph"), r.getInt("start"), r.getInt("end"))
                     }, a.getString("chinese"), a.getString("source"))
                 }).also(Alignments::validate)
-            }, root.getLong("importedAt"))
+            }, root.getLong("importedAt"), root.optString("sourceFormat", ""),
+            (root.optJSONArray("contents") ?: JSONArray()).objects().map { e -> ContentsEntry(e.getString("title"), e.getInt("chapter"),
+                e.optInt("paragraph"), e.optInt("character"), e.optInt("depth")) })
     }
 }

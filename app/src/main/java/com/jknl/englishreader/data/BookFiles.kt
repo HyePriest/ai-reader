@@ -18,14 +18,40 @@ internal fun InputStream.readLimited(limit: Int): ByteArray {
 
 object BookFiles {
     fun read(input: InputStream): Book = read(input, "导入的文本")
-    fun read(input: InputStream, fileName: String): Book = DocumentImporter.bilingual(readDocument(input, fileName))
+    fun read(input: InputStream, fileName: String, onCover: (String, ByteArray) -> Unit = { _, _ -> }): Book = DocumentImporter.bilingual(readDocument(input, fileName, onCover))
 
     /** Raw extraction is also used for a separate Chinese book; do not strip its paragraphs. */
-    fun readDocument(input: InputStream, fileName: String = "导入的文本"): Book {
+    fun readDocument(input: InputStream, fileName: String = "导入的文本", onCover: (String, ByteArray) -> Unit = { _, _ -> }): Book {
         val bytes = input.readLimited(32 * 1024 * 1024)
-        if (bytes.size >= 4 && bytes[0] == 80.toByte() && bytes[1] == 75.toByte()) return EpubImporter().read(bytes.inputStream())
+        if (bytes.take(5).toByteArray().toString(Charsets.US_ASCII) == "{\\rtf") return RtfImporter.read(bytes, fileName)
+        if (bytes.take(5).toByteArray().toString(Charsets.US_ASCII) == "%PDF-") return PdfImporter.read(bytes, fileName)
+        if (bytes.size >= 68 && bytes.copyOfRange(60, 68).toString(Charsets.US_ASCII) in setOf("BOOKMOBI", "TEXtREAd"))
+            return MobiImporter.read(bytes, fileName, onCover)
+        if (bytes.size >= 4 && bytes[0] == 80.toByte() && bytes[1] == 75.toByte()) {
+            val extension = fileName.substringAfterLast('.', "").lowercase()
+            if (extension == "docx") return DocxImporter.read(bytes, fileName)
+            if (extension == "fb2zip" || fileName.endsWith(".fb2.zip", ignoreCase = true)) {
+                java.util.zip.ZipInputStream(bytes.inputStream()).use { zip ->
+                    var count = 0
+                    var total = 0L
+                    var entry = zip.nextEntry
+                    while (entry != null) {
+                        require(++count <= 6000) { "FB2 压缩包内部文件过多" }
+                        val data = zip.readLimited(32 * 1024 * 1024)
+                        total += data.size
+                        require(total <= 100L * 1024 * 1024) { "FB2 压缩包解压后过大" }
+                        if (!entry.isDirectory && entry.name.endsWith(".fb2", ignoreCase = true))
+                            return Fb2Importer.read(DocumentImporter.decode(data), onCover)
+                        entry = zip.nextEntry
+                    }
+                }
+                error("压缩包内没有 FB2 正文")
+            }
+            return EpubImporter().read(bytes.inputStream(), onCover)
+        }
         val raw = DocumentImporter.decode(bytes).trimStart()
         return when {
+            Regex("<(?:[A-Za-z0-9_-]+:)?FictionBook(?:\\s|>)", RegexOption.IGNORE_CASE).containsMatchIn(raw.take(4096)) -> Fb2Importer.read(raw, onCover)
             raw.startsWith("<") -> if (raw.contains("SENTENCE_BOUNDS") || raw.contains("TRANSLATIONS")) HtmlBookImporter().read(raw) else DocumentImporter.html(raw)
             raw.startsWith("{") -> readJson(JSONObject(raw))
             else -> DocumentImporter.text(raw, fileName.substringBeforeLast('.'))
@@ -53,13 +79,14 @@ object BookFiles {
                 val id = p.optString("id", "p${pi + 1}")
                 if (language == "zh") {
                     val body = p.getString("text").also { require(it.isNotBlank()) { "$id 正文为空" } }
-                    paragraphs += Paragraph(id, body)
+                    paragraphs += Paragraph(id, body, annotations = BookAnnotations.read(p, body, id))
                     continue
                 }
                 val sentences = p.getJSONArray("sentences")
                 require(sentences.length() > 0) { "段落 $id 没有句子" }
                 val text = StringBuilder()
                 val units = mutableListOf<ReadingUnit>()
+                val annotations = mutableListOf<BookAnnotation>()
                 for (si in 0 until sentences.length()) {
                     val s = sentences.getJSONObject(si)
                     val en = s.getString("en").trim().also { require(it.isNotBlank()) { "$id 有空英文" } }
@@ -67,12 +94,14 @@ object BookFiles {
                     val start = text.length
                     text.append(en)
                     units += ReadingUnit(start, text.length)
+                    annotations += BookAnnotations.read(s, en, "$id:${si + 1}", start)
                     val origin = s.optString("translation_source", "unspecified")
                     require(origin in setOf("published", "ai", "unspecified")) { "$id:$si 的 translation_source 应为 published 或 ai" }
                     if (!s.isNull("zh") && s.getString("zh").isNotBlank()) alignments += Alignment("$id:$si", listOf(SourceRange(id, start, text.length)), s.getString("zh"),
                         when (origin) { "ai" -> "AI 补译"; "published" -> "原译本"; else -> "书籍 JSON" })
                 }
-                paragraphs += Paragraph(id, text.toString(), units = units)
+                annotations += BookAnnotations.read(p, text.toString(), id)
+                paragraphs += Paragraph(id, text.toString(), units = units, annotations = annotations)
             }
             Chapter(c.optString("id", "ch${ci + 1}"), titleEn, paragraphs, alignments).also(Alignments::validate)
         }

@@ -24,19 +24,40 @@ class BookCovers(private val context: Context) {
         }.getOrNull()
     }
 
-    fun save(id: String, uri: Uri) {
-        val resolver = context.contentResolver
+    fun save(id: String, uri: Uri) = saveImage(id) { context.contentResolver.openInputStream(uri) }
+    fun save(id: String, bytes: ByteArray) = saveImage(id) { bytes.inputStream() }
+
+    fun savePdf(id: String, source: File) {
+        android.os.ParcelFileDescriptor.open(source, android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
+            android.graphics.pdf.PdfRenderer(descriptor).use { renderer ->
+                renderer.openPage(0).use { page ->
+                    val scale = 1024f / maxOf(page.width, page.height)
+                    val bitmap = Bitmap.createBitmap((page.width * scale).toInt().coerceAtLeast(1),
+                        (page.height * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                    try {
+                        bitmap.eraseColor(android.graphics.Color.WHITE)
+                        page.render(bitmap, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        val bytes = java.io.ByteArrayOutputStream()
+                        check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, bytes))
+                        save(id, bytes.toByteArray())
+                    } finally { bitmap.recycle() }
+                }
+            }
+        }
+    }
+
+    private fun saveImage(id: String, open: () -> java.io.InputStream?) {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        open()?.use { BitmapFactory.decodeStream(it, null, bounds) }
         require(bounds.outWidth in 1..60000 && bounds.outHeight in 1..60000) { "这张图片无法读取，请选择 JPG、PNG 或 WebP 图片" }
         var sample = 1
         while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 1024) sample *= 2
-        val bitmap = resolver.openInputStream(uri)?.use {
+        val bitmap = open()?.use {
             BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
         } ?: error("无法读取图片")
         var upright: Bitmap = bitmap
         try {
-            val orientation = runCatching { resolver.openInputStream(uri)?.use {
+            val orientation = runCatching { open()?.use {
                 ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
             } }.getOrNull()
             val matrix = Matrix().apply {

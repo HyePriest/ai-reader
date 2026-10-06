@@ -84,6 +84,7 @@ fun ReaderApp() {
     var importInfo by remember { mutableStateOf(false) }
     var importGuide by rememberSaveable { mutableStateOf(false) }
     var pendingBook by remember { mutableStateOf<Book?>(null) }
+    var annotationUpdate by remember { mutableStateOf<Pair<Book, Book>?>(null) }
     var notebookOpen by rememberSaveable { mutableStateOf(false) }
     SideEffect {
         val window = (context as? Activity)?.window
@@ -125,7 +126,12 @@ fun ReaderApp() {
             busy = "正在整理书籍与中英文对应…"
             try {
                 val book = withContext(Dispatchers.IO) { store.import(uri) }
-                if (books.any { it.id == book.id }) notice = "这本书已经在书架上，已有译文和进度已保留。"
+                if (books.any { it.id == book.id }) {
+                    val before = withContext(Dispatchers.IO) { store.open(book.id) }
+                    val after = BookAnnotations.supplement(before, book)
+                    if (before == after) notice = "这本书已经在书架上，已有译文、注释和进度已保留。"
+                    else annotationUpdate = before to after
+                }
                 else {
                     pendingBook = book
                 }
@@ -162,11 +168,13 @@ fun ReaderApp() {
         if (importGuide) ImportGuideDialog { importGuide = false; importInfo = true }
         if (importInfo) AlertDialog(onDismissRequest = { importInfo = false }, title = { Text("把一本书带进来") }, text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text("推荐：AI 整理，一次导入\n把英文原书与中文译本交给 AI 匹配，生成书籍 JSON，直接导入。缺译可由 AI 补译并标记来源。")
+                Text("直接导入电子书\n支持 EPUB、PDF、MOBI / AZW / AZW3、TXT、FB2、DOCX 和 RTF。中文和英文都能独立阅读，无须先用 AI 整理。")
+                Text("PDF 可查看原页。有文字的 PDF 也能提取正文；扫描页可放大阅读，暂不支持查词和选句。", style = MaterialTheme.typography.bodySmall)
+                Text("需要双语时，可让 AI 匹配原文与译本，并提取材料中已有的注释；也可为英文原书补译。")
                 OutlinedButton(onClick = { importInfo = false; importGuide = true }, modifier = Modifier.fillMaxWidth().testTag("view-import-guide")) {
                     Text("查看并复制提示词 · JSON 示例")
                 }
-                Text("中文也能独立阅读\n支持中文、英文 EPUB、HTML、TXT 和书籍 JSON。阅读时按住音量减约 0.3 秒，框选原文后直接提问。")
+                Text("已有的书籍 JSON 和 HTML 仍可导入。文字正文中按住音量减约 0.3 秒，可框选原文后直接提问。")
                 Text("长书需要分次补充时，仍可使用书内的「章节与中文」。中英交替且无明确标记的文件会显示配对预览。", style = MaterialTheme.typography.bodySmall)
             }
         }, confirmButton = { Button(onClick = { importInfo = false; importer.launch(arrayOf("*/*")) }) { Text("选择书籍文件") } }, dismissButton = { TextButton(onClick = { importInfo = false }) { Text("取消") } })
@@ -176,6 +184,24 @@ fun ReaderApp() {
             pendingBook = null
             notice = "已导入《${confirmed.title}》 · ${confirmed.chapters.size} 节"
         }) }
+        annotationUpdate?.let { (before, after) ->
+            val changed = before.chapters.zip(after.chapters).flatMap { (a, b) -> a.paragraphs.zip(b.paragraphs) }
+                .filter { (a, b) -> a.annotations != b.annotations }
+            AlertDialog(onDismissRequest = { annotationUpdate = null }, title = { Text("更新随书注释") }, text = {
+                Text("《${before.title}》已在书架上。将更新 ${changed.size} 段的 ${changed.sumOf { it.second.annotations.size }} 条注释。\n\n这些段落的旧注释会被替换；文件中没有提供注释的段落保持原样。正文、已有译文和阅读进度保留。")
+            }, confirmButton = { Button(onClick = {
+                annotationUpdate = null
+                scope.launch {
+                    busy = "正在保存注释…"
+                    try {
+                        withContext(Dispatchers.IO) { store.saveWithUndo(before, after) }
+                        if (activeBook?.id == after.id) activeBook = after
+                        notice = "随书注释已更新。"
+                    } catch (e: Exception) { error = "注释保存失败：${e.message}" }
+                    finally { busy = "" }
+                }
+            }) { Text("更新注释") } }, dismissButton = { TextButton(onClick = { annotationUpdate = null }) { Text("取消") } })
+        }
         if (error != null) AlertDialog(onDismissRequest = { error = null }, title = { Text("暂时没有完成") }, text = { Text(error!!) }, confirmButton = { TextButton(onClick = { error = null }) { Text("知道了") } })
         if (notice != null) AlertDialog(onDismissRequest = { notice = null }, title = { Text("书架") }, text = { Text(notice!!) }, confirmButton = { TextButton(onClick = { notice = null }) { Text("好的") } })
     }
@@ -297,7 +323,7 @@ private fun SettingsSheet(settings: ReaderSettings, onChange: (ReaderSettings) -
                     FilterChip(selected = settings.palette == value, onClick = { onChange(settings.copy(palette = value)) }, label = { Text(label) })
                 }
             }
-            listOf(listOf("sage" to "鼠尾草", "blue" to "雾蓝", "rose" to "浅玫瑰"), listOf("sand" to "暖沙", "ink" to "墨蓝")).forEach { palettes ->
+            listOf(listOf("sage" to "鼠尾草", "blue" to "雾蓝", "rose" to "浅玫瑰"), listOf("sand" to "暖沙", "ink" to "墨蓝", "black" to "纯黑")).forEach { palettes ->
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     palettes.forEach { (value, label) ->
                         FilterChip(selected = settings.palette == value, onClick = { onChange(settings.copy(palette = value)) }, label = { Text(label) })
@@ -340,6 +366,7 @@ private fun Glyph(name: String, modifier: Modifier = Modifier) {
             "close" -> { line(6f, 6f, 18f, 18f); line(18f, 6f, 6f, 18f) }
             "back" -> { line(15f, 5f, 8f, 12f); line(8f, 12f, 15f, 19f) }
             "forward" -> { line(8f, 5f, 15f, 12f); line(15f, 12f, 8f, 19f) }
+            "search" -> { drawCircle(color, 6f * u, Offset(10f * u, 10f * u), style = androidx.compose.ui.graphics.drawscope.Stroke(1.65f * u)); line(15f, 15f, 21f, 21f) }
             "list" -> { for (y in listOf(6f, 12f, 18f)) { line(4f, y, 5f, y); line(9f, y, 20f, y) } }
             "type" -> { line(3f, 19f, 9f, 5f); line(9f, 5f, 15f, 19f); line(5f, 14f, 13f, 14f); line(17f, 11f, 23f, 11f); line(20f, 11f, 20f, 19f) }
             "settings" -> { for (y in listOf(6f, 12f, 18f)) line(3f, y, 21f, y); for ((x, y) in listOf(8f to 6f, 16f to 12f, 10f to 18f)) drawCircle(color, 2.3f * u, Offset(x * u, y * u)) }

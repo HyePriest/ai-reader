@@ -5,6 +5,9 @@ The MIT license in this repository applies to the project code and original samp
 - AndroidX / Jetpack Compose / Material Components: Apache License 2.0. https://android.googlesource.com/platform/frameworks/support/
 - Kotlin and kotlinx.coroutines: Apache License 2.0. https://github.com/JetBrains/kotlin and https://github.com/Kotlin/kotlinx.coroutines
 - jsoup: MIT License. https://github.com/jhy/jsoup/blob/master/LICENSE
+- PdfBox-Android 2.0.27.0: Apache License 2.0. https://github.com/TomRoush/PdfBox-Android
+- Bouncy Castle (PDFBox dependency): MIT License. https://www.bouncycastle.org/licence.html
+- libmobi 0.12: GNU Lesser General Public License version 3 or later. Upstream source is preserved in `app/src/main/cpp/libmobi/src`, with its license in `app/src/main/cpp/libmobi/COPYING`. https://github.com/bfabiszewski/libmobi/tree/v0.12 . It is built as the separate replaceable shared library `libmobi.so`; DRM decryption is disabled. Rebuild it using the NDK and CMake configuration in this repository. The app's JNI bridge is separate in `mobi_bridge.c`.
 - desugar_jdk_libs: GNU General Public License version 2 with the Classpath Exception. https://github.com/google/desugar_jdk_libs/blob/master/LICENSE
 - Gradle (including the wrapper): Apache License 2.0. https://github.com/gradle/gradle/blob/master/LICENSE
 - JUnit 4 (tests only): Eclipse Public License 1.0. https://github.com/junit-team/junit4/blob/main/LICENSE-junit.txt

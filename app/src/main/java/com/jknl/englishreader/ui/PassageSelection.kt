@@ -1,7 +1,8 @@
 package com.jknl.englishreader.ui
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -38,8 +39,6 @@ internal fun boxPassages(rect: Rect, layouts: List<PassageLayout>, rows: List<Re
             end = end.coerceIn(start, l.getLineEnd(line, true))
             if (end == start && end < l.getLineEnd(line, true)) end++
             val text = p.row.paragraph.text
-            if (start < text.length) TextLocator.wordAt(text, start)?.let { start = it.first }
-            if (end > 0) TextLocator.wordAt(text, end - 1)?.let { end = it.last + 1 }
             if (start > 0 && start < text.length && text[start].isLowSurrogate()) start--
             if (end < text.length && end > 0 && text[end - 1].isHighSurrogate()) end++
             if (end > start) hits += PassageRange(p.row.chapter, p.row.paragraphIndex, start, end)
@@ -56,6 +55,25 @@ internal fun boxPassages(rect: Rect, layouts: List<PassageLayout>, rows: List<Re
     }
 }
 
+/** Caret hit-testing rounds at the middle of a glyph; taps must choose the glyph itself. */
+internal fun tapPassage(point: Offset, layouts: List<PassageLayout>): List<PassageRange> {
+    val p = layouts.firstOrNull { it.bounds.contains(point) } ?: return emptyList()
+    val local = point - p.bounds.topLeft
+    val line = p.layout.getLineForVerticalPosition(local.y)
+    if (local.x < p.layout.getLineLeft(line) || local.x >= p.layout.getLineRight(line)) return emptyList()
+    val text = p.row.paragraph.text
+    val caret = p.layout.getOffsetForPosition(local)
+    var offset = listOf(caret, caret - 1).firstOrNull {
+        it in text.indices && p.layout.getBoundingBox(it).let { box -> local.x >= box.left && local.x < box.right }
+    } ?: return emptyList()
+    if (text[offset].isWhitespace()) return emptyList()
+    if (text[offset].isLowSurrogate() && offset > 0) offset--
+    val word = TextLocator.wordAt(text, offset)
+    val start = word?.first ?: offset
+    val end = word?.let { it.last + 1 } ?: offset + Character.charCount(text.codePointAt(offset))
+    return listOf(PassageRange(p.row.chapter, p.row.paragraphIndex, start, end))
+}
+
 @Composable
 internal fun PassageOverlay(layouts: Map<String, PassageLayout>, rows: List<ReadingRow>,
     onPreview: (List<PassageRange>) -> Unit, onPicked: (List<PassageRange>) -> Unit, onCancel: () -> Unit) {
@@ -69,17 +87,35 @@ internal fun PassageOverlay(layouts: Map<String, PassageLayout>, rows: List<Read
     val latestPicked by rememberUpdatedState(onPicked)
     Box(Modifier.fillMaxSize().onGloballyPositioned { origin = it.boundsInRoot().topLeft }) {
         Canvas(Modifier.fillMaxSize().testTag("ai-selection-overlay").pointerInput(Unit) {
-            detectDragGestures(onDragStart = { point -> start = point; end = point; picked = emptyList(); empty = false },
-                onDrag = { change, _ ->
-                    change.consume(); end = change.position
-                    val a = start ?: change.position; val b = change.position
-                    val rect = Rect(min(a.x,b.x) + origin.x, min(a.y,b.y) + origin.y, max(a.x,b.x) + origin.x, max(a.y,b.y) + origin.y)
-                    picked = boxPassages(rect, layouts.values.toList(), rows)
-                    latestPreview(picked)
-                }, onDragEnd = {
-                    if (picked.isNotEmpty()) latestPicked(picked) else empty = true
-                    start = null; end = null
-                }, onDragCancel = { start = null; end = null; latestPreview(emptyList()) })
+            awaitEachGesture {
+                val down = awaitFirstDown()
+                down.consume()
+                val a = down.position
+                start = a; end = a; empty = false
+                picked = tapPassage(a + origin, layouts.values.toList())
+                latestPreview(picked)
+                var moved = false
+                var cancelled = false
+                do {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull { it.id == down.id }
+                    if (change == null || change.isConsumed) { cancelled = true; break }
+                    val b = change.position
+                    change.consume()
+                    end = b
+                    if ((b - a).getDistance() > viewConfiguration.touchSlop / 4f) moved = true
+                    if (moved) {
+                        // Keep a small vertical band for drags along one text line.
+                        val rect = Rect(min(a.x,b.x) + origin.x, min(a.y,b.y) + origin.y - 1f,
+                            max(a.x,b.x) + origin.x + 1f, max(a.y,b.y) + origin.y + 1f)
+                        picked = boxPassages(rect, layouts.values.toList(), rows)
+                        latestPreview(picked)
+                    }
+                } while (change.pressed)
+                start = null; end = null
+                if (cancelled) latestPreview(emptyList())
+                else if (picked.isNotEmpty()) latestPicked(picked) else empty = true
+            }
         }) {
             val a = start; val b = end
             if (a != null && b != null) {
@@ -92,7 +128,7 @@ internal fun PassageOverlay(layouts: Map<String, PassageLayout>, rows: List<Read
         Surface(Modifier.align(androidx.compose.ui.Alignment.TopCenter).padding(top = 24.dp, start = 16.dp, end = 16.dp),
             shape = MaterialTheme.shapes.medium, tonalElevation = 5.dp) {
             Row(Modifier.padding(start = 16.dp, end = 6.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Text(if (empty) "没有选中文字，请重新拖动" else "拖动框选文字，松手提问", fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Text(if (empty) "没有选中文字，请点文字或重新拖动" else "点选单字或单词，拖动选择一段，松手提问", fontSize = 13.sp, modifier = Modifier.weight(1f))
                 TextButton(onClick = onCancel) { Text("取消") }
             }
         }

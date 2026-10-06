@@ -23,7 +23,7 @@ object ChineseImport {
             ChineseChapter(c.id, c.title, if (translations.isNotEmpty()) translations.map { it.chinese }
                 else c.paragraphs.filterNot { it.heading }.map { it.text })
         }.filter { it.paragraphs.isNotEmpty() }
-        require(chapters.isNotEmpty() && chapters.any { c -> c.paragraphs.any(DocumentImporter::chinese) }) { "没有找到中文正文，请选择中文 EPUB、HTML、TXT 或已有双语书籍 JSON" }
+        require(chapters.isNotEmpty() && chapters.any { c -> c.paragraphs.any(DocumentImporter::chinese) }) { "没有找到可提取的中文正文；扫描页需先进行 OCR，文字电子书可直接导入" }
         return ChineseDocument(raw.id, raw.title, chapters, raw.takeIf { b -> b.chapters.any { it.alignments.isNotEmpty() } })
     }
 

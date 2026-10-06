@@ -25,11 +25,12 @@ internal fun ImportGuideDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val guide = remember { context.assets.open("ai-book-preparation.md").bufferedReader(Charsets.UTF_8).use { it.readText() } }
-    var chinese by rememberSaveable { mutableStateOf(false) }
+    var mode by rememberSaveable { mutableIntStateOf(0) }
     var copied by remember { mutableStateOf<String?>(null) }
-    val prompt = remember(guide, chinese) {
-        if (chinese) guide.substringAfter("## 纯中文书").trim()
-        else guide.substringAfter("## 可复制的提示词：英文原文 + 已有中文译本").substringBefore("## 纯中文书").trim()
+    val prompt = remember(guide, mode) {
+        val heading = listOf("## 可复制的提示词：英文原文 + 已有中文译本", "## 可复制的提示词：只有英文原文，由 AI 翻译", "## 纯中文书")[mode]
+        guide.substringAfter(heading).substringBefore("\n## ").trim() + "\n\n## 注释格式（适用于以上所有方式）\n\n" +
+            guide.substringAfter("## 注释格式（适用于以上所有方式）").trim()
     }
     val json = remember(prompt) { prompt.substringAfter("```json").substringBefore("```").trim() }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -41,13 +42,17 @@ internal fun ImportGuideDialog(onDismiss: () -> Unit) {
                     GlyphButton("close", "关闭提示词", onDismiss)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = !chinese, onClick = { chinese = false; copied = null }, label = { Text("双语书") })
-                    FilterChip(selected = chinese, onClick = { chinese = true; copied = null }, label = { Text("纯中文书") })
+                    listOf("已有译本", "AI 翻译", "纯中文").forEachIndexed { index, label ->
+                        FilterChip(selected = mode == index, onClick = { mode = index; copied = null }, label = { Text(label) })
+                    }
                 }
-                Text(if (chinese) "复制提示词 → 连同中文书交给 AI → 下载 JSON → 返回导入。中文 EPUB、TXT、HTML 也可直接导入。"
-                    else "复制提示词 → 连同英文原书和中文译本交给 AI → 下载 JSON → 返回导入。原始文件可用 EPUB、TXT、Word 等 AI 能读取的格式。",
+                Text(when (mode) {
+                    2 -> "复制提示词 → 连同中文书交给 AI → 下载 JSON → 返回导入。中文 EPUB、TXT、HTML 也可直接导入。"
+                    1 -> "只需英文原书，无需寻找译本。复制提示词交给 AI，让它翻译并整理为 JSON；未提供译本注释时不添加注释。"
+                    else -> "复制提示词 → 连同英文原书和中文译本交给 AI → 下载 JSON → 返回导入。原始文件可用 EPUB、TXT、Word 等 AI 能读取的格式。"
+                },
                     fontSize = 13.sp, lineHeight = 21.sp)
-                key(chinese) {
+                key(mode) {
                     SelectionContainer(Modifier.weight(1f)) {
                         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text(prompt.substringBefore("```json").trim(), fontSize = 15.sp, lineHeight = 25.sp)

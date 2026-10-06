@@ -7,6 +7,7 @@ import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
@@ -28,6 +29,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.*
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -42,6 +47,8 @@ import com.jknl.englishreader.data.Paragraph
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -66,7 +73,12 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
     val initialIndex = remember { rows.indexOfFirst { it.chapter == initial.chapter && it.paragraphIndex == initial.paragraph }.coerceAtLeast(0) }
     val list = rememberLazyListState(initialIndex)
     var chapterIndex by remember { mutableIntStateOf(initial.chapter) }
+    var chapterProgress by remember { mutableFloatStateOf(0f) }
     var contents by rememberSaveable { mutableStateOf(false) }
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
+    var searchHit by remember { mutableStateOf<PassageRange?>(null) }
+    var searchJump by remember { mutableStateOf<ReadingPosition?>(null) }
+    var pdfOriginal by rememberSaveable { mutableStateOf(false) }
     var chrome by rememberSaveable { mutableStateOf(true) }
     var selection by remember { mutableStateOf<Selection?>(null) }
     var lastTap by remember { mutableStateOf<Pair<Pair<Int, SourceRange>, Long>?>(null) }
@@ -84,7 +96,9 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
     var aiPreview by remember { mutableStateOf(emptyList<PassageRange>()) }
     var aiQuestion by remember { mutableStateOf<ReadingQuestion?>(null) }
     var aiError by remember { mutableStateOf<String?>(null) }
-    ReadingSession(book.id, trackingEnabled && !contents && !notebookOpen && editing == null)
+    var annotation by remember { mutableStateOf<Pair<Paragraph, Int>?>(null) }
+    ReadingSession(book.id, trackingEnabled && !contents && !searchOpen && !notebookOpen && editing == null && !pdfOriginal)
+    if (pdfOriginal) PdfOriginalDialog(book, chapterIndex) { pdfOriginal = false }
     fun cancelLookup() { generation++; request?.cancel(); request = null; loading = false }
     fun closePanel() { cancelLookup(); selection = null; lastTap = null; wordMode = false }
     fun lookup(picked: Selection) {
@@ -107,7 +121,7 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
         catch (_: Exception) { saved = false; saveMessage = "生词本暂时无法读取，原数据已保留。" }
     }
     val activity = context as? MainActivity
-    val wakeEnabled = trackingEnabled && !contents && !notebookOpen && editing == null && aiQuestion == null
+    val wakeEnabled = trackingEnabled && !contents && !searchOpen && !notebookOpen && editing == null && aiQuestion == null && annotation == null
     val wakeAi by rememberUpdatedState<() -> Unit> {
         closePanel(); chrome = false; aiRanges = emptyList(); aiPreview = emptyList(); selectingAi = true
     }
@@ -140,11 +154,11 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
                     .size.height.toDp()
             }
         }
-        val translationHeight = minOf(maxHeight * .55f, maxOf(180.dp, translationTextHeight + 96.dp))
+        val translationHeight = minOf(maxHeight * .55f, maxOf(80.dp, translationTextHeight + 32.dp))
         Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f)) {
             ContinuousParagraphs(book, rows, list, store, settings, initial, selection, wordMode, Modifier.fillMaxSize(), jump,
-                onJumpDone = { jump = null }, onChapter = { chapterIndex = it }, onChrome = { chrome = it },
+                onJumpDone = { jump = null }, onChapter = { chapterIndex = it }, onProgress = { chapterProgress = it }, onChrome = { chrome = it }, onBlank = { closePanel(); chrome = true },
                 onSelect = { picked ->
                     cancelLookup()
                     val now = SystemClock.uptimeMillis()
@@ -152,13 +166,14 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
                     val double = lastTap?.let { it.first == identity && now - it.second <= doubleTapTimeout } == true
                     selection = if (double) null else if (wordMode) picked else toggleSelection(selection, picked)
                     wordMode = false; lastTap = if (double) null else identity to now
-                }, onWord = { lookup(it) }, selectingAi = selectingAi, aiRanges = aiRanges + aiPreview,
+                }, onWord = { lookup(it) }, onAnnotation = { p, index -> annotation = p to index }, selectingAi = selectingAi, aiRanges = aiRanges + aiPreview,
                 onAiPreview = { aiPreview = it }, onAiPicked = { ranges ->
                     try {
                         val question = ReadingQuestions.selection(book, aiRanges + ranges)
                         aiRanges = question.passages; aiQuestion = question; selectingAi = false; aiPreview = emptyList()
                     } catch (e: Exception) { aiError = e.message }
-                }, onAiCancel = { selectingAi = false; aiPreview = emptyList(); aiRanges = emptyList() })
+                }, onAiCancel = { selectingAi = false; aiPreview = emptyList(); aiRanges = emptyList() },
+                searchHit = searchHit, searchJump = searchJump, onSearchJumpDone = { searchJump = null })
             // Overlay instead of inserting/removing a row above the list: no text jumps on title changes.
             if (chrome && !selectingAi) Surface(modifier = Modifier.pointerInput(Unit) { detectTapGestures(onTap = {}) },
                 color = MaterialTheme.colorScheme.background, shadowElevation = 1.dp) {
@@ -166,12 +181,23 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
                     GlyphButton("back", "返回书架", onBack)
                     Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
                         Text(book.title, fontSize = 14.sp, lineHeight = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("${chapterIndex + 1} / ${book.chapters.size}  ·  ${book.chapters[chapterIndex].coverage()}", fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${book.chapters[chapterIndex].title}  ·  ${book.chapters[chapterIndex].coverage()}", fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("全书 ${book.countLabel} · 本章 ${book.chapters[chapterIndex].countLabel}", fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    GlyphButton("search", "搜索本书", { closePanel(); searchOpen = true })
                     GlyphButton("list", "目录", { contents = true })
+                    if (book.sourceFormat == "pdf") TextButton(onClick = { pdfOriginal = true }) { Text("原页") }
                     GlyphButton("type", "阅读设置", onSettings)
                 }
+            }
+            val progressColor = MaterialTheme.colorScheme.onBackground
+            Canvas(Modifier.fillMaxWidth().height(4.dp).align(androidx.compose.ui.Alignment.TopCenter)
+                .testTag("chapter-progress").semantics {
+                    contentDescription = "${book.chapters[chapterIndex].title} 阅读进度"
+                    progressBarRangeInfo = ProgressBarRangeInfo(chapterProgress, 0f..1f)
+                }) {
+                drawRect(progressColor.copy(alpha = .14f))
+                drawRect(progressColor.copy(alpha = .85f), size = androidx.compose.ui.geometry.Size(size.width * chapterProgress, size.height))
             }
             }
             selection?.let { s -> ReadingPanel(s, wordMode, wordResult, loading, wordError,
@@ -187,9 +213,10 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
                     } }
                 }, onNotebook = { notebookOpen = true },
                 onRetry = { lookup(s) }, onSettings = { chrome = true; onSettings() },
-                onEdit = { editing = s.chapterIndex to (s.alignment?.ranges ?: listOf(s.range)) }, onClose = ::closePanel) }
+                onClose = ::closePanel) }
         }
     }
+    annotation?.let { (paragraph, index) -> AnnotationDialog(paragraph, index, onDismiss = { annotation = null }) }
     aiQuestion?.let { question -> ReadingQuestionSheet(question,
         onDismiss = { aiQuestion = null; aiRanges = emptyList() },
         onReselect = { aiQuestion = null; aiRanges = emptyList(); aiPreview = emptyList(); selectingAi = true },
@@ -208,15 +235,23 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
                 }
                 LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("chapter-list"), contentPadding = PaddingValues(bottom = 24.dp)) {
                     // TranslationFileActions and its import tools remain implemented; the directory hides their entry points.
-                    itemsIndexed(book.chapters, key = { _, c -> "chapter:${c.id}" }) { i, c ->
-                        ListItem(headlineContent = { Text(c.title, maxLines = 2) }, supportingContent = { Text(c.countLabel) },
-                            leadingContent = { Text("%02d".format(i + 1), color = MaterialTheme.colorScheme.primary) },
-                            modifier = Modifier.clickable { closePanel(); jump = i; chapterIndex = i; contents = false; chrome = true })
+                    val entries = book.contents.ifEmpty { book.chapters.mapIndexed { i, c -> ContentsEntry(c.title, i) } }
+                    itemsIndexed(entries) { _, entry ->
+                        ListItem(headlineContent = { Text(entry.title, maxLines = 2) },
+                            modifier = Modifier.padding(start = (entry.depth.coerceIn(0, 6) * 16).dp).clickable {
+                                closePanel(); searchHit = null
+                                searchJump = ReadingPosition(entry.chapter, entry.paragraph, entry.character)
+                                chapterIndex = entry.chapter; contents = false; chrome = true
+                            })
                     }
                 }
             }
         }
     }
+    if (searchOpen) ReaderSearch(book, rows, onDismiss = { searchOpen = false }, onPick = { hit ->
+        searchHit = hit; searchJump = ReadingPosition(hit.chapter, hit.paragraph, hit.start)
+        chapterIndex = hit.chapter; searchOpen = false; chrome = true
+    })
     editing?.let { (ci, ranges) -> TranslationEditor(book, ci, ranges, onDismiss = { editing = null }, onSave = { updated ->
         onUpdate(updated)
         selection = selection?.let { it.copy(alignment = updated.chapters[it.chapterIndex].translationAt(it.paragraph.id, it.range.start)) }
@@ -227,16 +262,33 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
 @Composable
 private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyListState, store: LibraryStore, settings: ReaderSettings,
     initial: ReadingPosition, selection: Selection?, wordMode: Boolean, modifier: Modifier, jump: Int?, onJumpDone: () -> Unit,
-    onChapter: (Int) -> Unit, onChrome: (Boolean) -> Unit, onSelect: (Selection) -> Unit, onWord: (Selection) -> Unit,
+    onChapter: (Int) -> Unit, onProgress: (Float) -> Unit, onChrome: (Boolean) -> Unit, onBlank: () -> Unit, onSelect: (Selection) -> Unit, onWord: (Selection) -> Unit,
+    onAnnotation: (Paragraph, Int) -> Unit,
     selectingAi: Boolean, aiRanges: List<PassageRange>, onAiPreview: (List<PassageRange>) -> Unit,
-    onAiPicked: (List<PassageRange>) -> Unit, onAiCancel: () -> Unit) {
+    onAiPicked: (List<PassageRange>) -> Unit, onAiCancel: () -> Unit,
+    searchHit: PassageRange?, searchJump: ReadingPosition?, onSearchJumpDone: () -> Unit) {
     val passageLayouts = remember { mutableStateMapOf<String, PassageLayout>() }
+    val passageBounds = remember { mutableStateMapOf<String, Rect>() }
     val layouts = remember { mutableStateMapOf<String, TextLayoutResult>() }
     val lifecycle = LocalLifecycleOwner.current
     var restoring by remember { mutableStateOf(true) }
     var anchor by remember { mutableStateOf(initial) }
     val latestChapter by rememberUpdatedState(onChapter)
+    val latestProgress by rememberUpdatedState(onProgress)
+    val chapterOffsets = remember(book.chapters) { book.chapters.map { chapter ->
+        chapter.paragraphs.runningFold(0) { count, p -> count + if (p.heading) 0 else p.text.length }
+    } }
+    fun progress(position: ReadingPosition): Float {
+        val chapter = book.chapters[position.chapter]
+        val offsets = chapterOffsets[position.chapter]
+        val paragraph = position.paragraph.coerceIn(chapter.paragraphs.indices)
+        val character = if (chapter.paragraphs[paragraph].heading) 0 else position.character.coerceIn(0, chapter.paragraphs[paragraph].text.length)
+        return ((offsets[paragraph] + character).toFloat() / offsets.last().coerceAtLeast(1)).coerceIn(0f, 1f)
+    }
+    LaunchedEffect(book.chapters) { latestProgress(progress(initial)) }
     val latestChrome by rememberUpdatedState(onChrome)
+    val toolbarInset = with(LocalDensity.current) { (88.dp + WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()).roundToPx() }
+    val latestBlank by rememberUpdatedState(onBlank)
     fun currentPosition(): ReadingPosition {
         val row = rows[list.firstVisibleItemIndex.coerceIn(rows.indices)]
         val layout = layouts[row.key]
@@ -269,10 +321,29 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
             list.scrollToItem(index); restoring = false; persist(); latestChapter(jump); onJumpDone()
         }
     }
+    LaunchedEffect(searchJump) {
+        val target = searchJump ?: return@LaunchedEffect
+        restoring = true
+        try {
+            val index = rows.indexOfFirst { it.chapter == target.chapter && it.paragraphIndex == target.paragraph }
+            if (index >= 0) {
+                list.scrollToItem(index)
+                val layout = snapshotFlow { layouts[rows[index].key] }.filterNotNull().first()
+                val line = layout.getLineForOffset(target.character)
+                list.scrollToItem(index, layout.getLineTop(line).toInt() - toolbarInset)
+                latestChapter(target.chapter); latestChrome(true)
+            }
+        } finally { restoring = false }
+        persist(); onSearchJumpDone()
+    }
     LaunchedEffect(list) {
         snapshotFlow { Triple(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset, list.isScrollInProgress) }
             .distinctUntilChanged().collect {
-                if (!restoring) latestChapter(rows[it.first.coerceIn(rows.indices)].chapter)
+                if (!restoring) {
+                    val position = currentPosition()
+                    latestChapter(position.chapter)
+                    latestProgress(if (!list.canScrollForward && position.chapter == book.chapters.lastIndex) 1f else progress(position))
+                }
                 if (!it.third) persist()
             }
     }
@@ -304,12 +375,16 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
     }
     Box(modifier) {
     LazyColumn(state = list, userScrollEnabled = !selectingAi, modifier = Modifier.fillMaxSize().testTag("reading-body").nestedScroll(scroll)
-        .pointerInput(Unit) { detectTapGestures(onTap = { latestChrome(true) }) },
+        .pointerInput(Unit) { detectTapGestures(onTap = { latestBlank() }) },
         contentPadding = PaddingValues(start = 26.dp, end = 26.dp,
             top = 88.dp + WindowInsets.displayCutout.asPaddingValues().calculateTopPadding(), bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)) {
         items(rows, key = { it.key }) { row ->
             val p = row.paragraph
+            if (p.pdfPage != null) {
+                PdfPageImage(book.id, p.pdfPage)
+                return@items
+            }
             val chapter = book.chapters[row.chapter]
 
             val active = selection?.takeIf { it.chapterIndex == row.chapter }
@@ -319,6 +394,10 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
             }.orEmpty().filter { it.paragraph == p.id } + aiRanges.filter { it.chapter == row.chapter && it.paragraph == row.paragraphIndex }.map { SourceRange(p.id, it.start, it.end) })
             val annotated = AnnotatedString.Builder(p.text).apply {
                 p.marks.forEach { m -> addStyle(if (m.kind == "italic") SpanStyle(fontStyle = FontStyle.Italic) else SpanStyle(fontWeight = FontWeight.Bold), m.start, m.end) }
+                p.annotations.forEach { note -> addStyle(SpanStyle(color = MaterialTheme.colorScheme.primary, textDecoration = TextDecoration.Underline), note.start, note.end) }
+                searchHit?.takeIf { it.chapter == row.chapter && it.paragraph == row.paragraphIndex }?.let {
+                    addStyle(SpanStyle(background = MaterialTheme.colorScheme.tertiaryContainer), it.start, it.end)
+                }
                 highlight.forEach { addStyle(SpanStyle(background = MaterialTheme.colorScheme.primaryContainer), it.start, it.end) }
             }.toAnnotatedString()
             val selectAt: (Int, Boolean) -> Unit = { offset, longPress ->
@@ -332,13 +411,18 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
                 }
             }
             val latestSelect by rememberUpdatedState(selectAt)
-            DisposableEffect(row.key) { onDispose { layouts.remove(row.key); passageLayouts.remove(row.key) } }
+            DisposableEffect(row.key) { onDispose { layouts.remove(row.key); passageLayouts.remove(row.key); passageBounds.remove(row.key) } }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(annotated, fontFamily = if (settings.serif) FontFamily.Serif else FontFamily.SansSerif,
                 fontSize = (if (p.heading) settings.size + 5 else settings.size).sp,
                 lineHeight = (settings.size * settings.spacing).sp, fontWeight = if (p.heading) FontWeight.SemiBold else FontWeight.Normal,
-                onTextLayout = { layouts[row.key] = it; passageLayouts[row.key]?.let { old -> passageLayouts[row.key] = old.copy(layout = it) } }, modifier = Modifier.fillMaxWidth().testTag("paragraph-${row.chapter}-${row.paragraphIndex}")
+                onTextLayout = { layout -> layouts[row.key] = layout; passageBounds[row.key]?.let { bounds -> passageLayouts[row.key] = PassageLayout(row, bounds, layout) } }, modifier = Modifier.fillMaxWidth().testTag("paragraph-${row.chapter}-${row.paragraphIndex}")
                     .then(if (p.heading && row.chapter > 0) Modifier.padding(top = 36.dp) else Modifier)
-                    .onGloballyPositioned { coords -> layouts[row.key]?.let { passageLayouts[row.key] = PassageLayout(row, Rect(coords.positionInRoot(), androidx.compose.ui.geometry.Size(coords.size.width.toFloat(), coords.size.height.toFloat())), it) } }
+                    .onGloballyPositioned { coords ->
+                        val bounds = Rect(coords.positionInRoot(), androidx.compose.ui.geometry.Size(coords.size.width.toFloat(), coords.size.height.toFloat()))
+                        passageBounds[row.key] = bounds
+                        layouts[row.key]?.let { passageLayouts[row.key] = PassageLayout(row, bounds, it) }
+                    }
                     .semantics { customActions = listOf(CustomAccessibilityAction("查看本段开头译文") {
                         latestSelect(p.text.indexOfFirst { it.isLetter() }.coerceAtLeast(0), false); true
                     }) }
@@ -347,14 +431,31 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
                             val layout = layouts[row.key] ?: return
                             val line = layout.getLineForVerticalPosition(point.y)
                             // Accept the whole line band, including word spaces, punctuation and line-height leading.
-                            // Only far-away trailing whitespace is reserved for revealing the toolbar.
-                            val tolerance = 24.dp.toPx()
-                            if (point.x < layout.getLineLeft(line) - tolerance || point.x > layout.getLineRight(line) + tolerance) { latestChrome(true); return }
-                            val offset = layout.getOffsetForPosition(point).coerceIn(layout.getLineStart(line), (layout.getLineEnd(line, visibleEnd = true) - 1).coerceAtLeast(layout.getLineStart(line))).coerceIn(0, p.text.lastIndex)
-                            latestSelect(offset, long)
+                            // Trailing whitespace closes the panel without selecting another sentence.
+                            if (point.x < layout.getLineLeft(line) || point.x > layout.getLineRight(line)) { latestBlank(); return }
+                            val caret = layout.getOffsetForPosition(point)
+                            val glyph = listOf(caret, caret - 1).firstOrNull { at -> at in p.text.indices &&
+                                layout.getBoundingBox(at).let { box -> point.x >= box.left && point.x < box.right } }
+                            val offset = (glyph ?: caret).coerceIn(layout.getLineStart(line), (layout.getLineEnd(line, visibleEnd = true) - 1).coerceAtLeast(layout.getLineStart(line))).coerceIn(0, p.text.lastIndex)
+                            val noteIndex = p.annotations.indexOfFirst { offset >= it.start && offset < it.end }
+                            if (!long && noteIndex >= 0 && !selectingAi) onAnnotation(p, noteIndex)
+                            else latestSelect(offset, long)
                         }
                         detectTapGestures(onTap = { hit(it, false) }, onLongPress = { hit(it, true) })
                     })
+            // Separate 48 dp controls keep every note reachable without covering the text.
+            if (p.annotations.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                p.annotations.forEachIndexed { index, note ->
+                    val quote = p.text.substring(note.start, note.end).replace('\n', ' ').trim()
+                    OutlinedButton(onClick = { onAnnotation(p, index) }, enabled = !selectingAi,
+                        modifier = Modifier.heightIn(min = 48.dp).widthIn(max = 240.dp)
+                            .testTag("annotation-${row.chapter}-${row.paragraphIndex}-$index"),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+                        Text("${index + 1} · $quote", fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+            }
         }
     }
     if (selectingAi) PassageOverlay(passageLayouts, rows, onAiPreview, onAiPicked, onAiCancel)

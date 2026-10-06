@@ -13,7 +13,7 @@
 
 随后运行 `./gradlew :app:assembleRelease`（Windows 为 `gradlew.bat`）。输出位于 `app/build/outputs/apk/release/`。没有配置签名时生成未签名包，不能作为可安装的正式发布包上传。
 
-发布时提供 APK、SHA-256 文件和证书指纹，确保 Release 对应同一个源码标签。以后沿用同一私钥并增加 versionCode，才能覆盖更新。
+发布时提供正式签名的 APK，确保 Release 对应同一个源码标签。以后沿用同一私钥并增加 versionCode，才能覆盖更新。不附加哈希文件或证书指纹。
 
 ## 调试版与公开版
 

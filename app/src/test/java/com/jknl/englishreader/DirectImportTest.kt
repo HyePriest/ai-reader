@@ -67,11 +67,13 @@ class DirectImportTest {
         assertTrue(BookFiles.read(raw.byteInputStream()).isChinese)
     }
 
-    @Test fun supportsChineseBeforeEnglishButRejectsUnpairedTrailingChinese() {
+    @Test fun supportsChineseBeforeEnglishAndPreservesAmbiguousMixedBooks() {
         val b = BookFiles.read("你好。\nHello.\n再见。\nGoodbye.".byteInputStream())
         assertEquals(2, b.chapters.single().alignments.size)
         assertEquals("你好。", b.chapters.single().translationAt("p1", 1)?.chinese)
-        assertThrows(IllegalArgumentException::class.java) { BookFiles.read("你好。\nHello.\n没有对应的英文。".byteInputStream()) }
+        val mixed = BookFiles.read("你好。\nHello.\n没有对应的英文。".byteInputStream())
+        assertEquals(listOf("你好。", "Hello.", "没有对应的英文。"), mixed.chapters.single().paragraphs.map { it.text })
+        assertTrue(mixed.chapters.single().alignments.isEmpty())
     }
 
     @Test fun supportsUtf16AndRejectsCorruptOrBinaryText() {

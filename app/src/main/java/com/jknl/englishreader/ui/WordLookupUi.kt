@@ -26,23 +26,20 @@ import kotlinx.coroutines.withContext
 @Composable
 internal fun ReadingPanel(selection: Selection, wordMode: Boolean, result: WordResult?, loading: Boolean, error: String?,
     height: Dp, saved: Boolean, saving: Boolean, saveMessage: String?, onSave: () -> Unit, onNotebook: () -> Unit,
-    onRetry: () -> Unit, onSettings: () -> Unit, onEdit: () -> Unit, onClose: () -> Unit) {
+    onRetry: () -> Unit, onSettings: () -> Unit, onClose: () -> Unit) {
     Surface(Modifier.testTag("translation-panel"), color = MaterialTheme.colorScheme.surface, shadowElevation = 5.dp) {
         Column(Modifier.fillMaxWidth().height(height).padding(horizontal = 22.dp, vertical = 8.dp)) {
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Text(if (wordMode) selection.word.orEmpty() else "中文对照", modifier = Modifier.weight(1f),
-                    fontFamily = if (wordMode) FontFamily.Serif else FontFamily.Default,
-                    fontSize = if (wordMode) 23.sp else 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                if (!wordMode) TextButton(onClick = onEdit) { Text(if (selection.alignment == null) "添加中文" else "校正") }
-                else {
+            if (wordMode) Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text(selection.word.orEmpty(), modifier = Modifier.weight(1f),
+                    fontFamily = FontFamily.Serif,
+                    fontSize = 23.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                     if (!loading && result != null) TextButton(enabled = !saved && !saving, onClick = onSave) { Text(if (saved) "已加入" else if (saving) "保存中…" else "加入生词本", fontSize = 12.sp) }
-                    GlyphButton("book", "打开生词本", onNotebook)
-                }
+                GlyphButton("book", "打开生词本", onNotebook)
                 GlyphButton("close", "关闭译文", onClose)
             }
             key(selection.chapterIndex, selection.range, wordMode, selection.word, result) {
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (!wordMode) Text(selection.alignment?.chinese ?: "这里还没有译文，可以添加这一句或选择更长的英文范围。", fontSize = 17.sp, lineHeight = 29.sp)
+                    if (!wordMode) Text(selection.alignment?.chinese ?: "这里还没有译文。", fontSize = 17.sp, lineHeight = 29.sp)
                     else when {
                         loading -> {
                             LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -63,7 +60,7 @@ internal fun ReadingPanel(selection: Selection, wordMode: Boolean, result: WordR
                     }
                 }
             }
-            Text(if (wordMode) "${result?.record?.goal?.title ?: "AI"} · 学习建议${if (result?.cached == true) " · 本地缓存" else " · DeepSeek"}" else "本地译文 · ${selection.alignment?.source.orEmpty()}",
+            if (wordMode) Text("${result?.record?.goal?.title ?: "AI"} · 学习建议${if (result?.cached == true) " · 本地缓存" else " · DeepSeek"}",
                 fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
         }
     }

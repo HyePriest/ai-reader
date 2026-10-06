@@ -8,8 +8,10 @@ fun Int.formatWords(): String = String.format(Locale.US, "%,d", this)
 data class Mark(val start: Int, val end: Int, val kind: String)
 data class ReadingUnit(val start: Int, val end: Int)
 data class WordNote(val start: Int, val end: Int, val term: String, val meaning: String)
+data class BookAnnotation(val start: Int, val end: Int, val text: String, val title: String = "", val source: String = "")
 data class Paragraph(val id: String, val text: String, val heading: Boolean = false, val marks: List<Mark> = emptyList(),
-    val units: List<ReadingUnit> = emptyList(), val notes: List<WordNote> = emptyList())
+    val units: List<ReadingUnit> = emptyList(), val notes: List<WordNote> = emptyList(), val annotations: List<BookAnnotation> = emptyList(),
+    val pdfPage: Int? = null)
 data class SourceRange(val paragraph: String, val start: Int, val end: Int)
 data class Alignment(val id: String, val ranges: List<SourceRange>, val chinese: String, val source: String)
 data class Chapter(val id: String, val title: String, val paragraphs: List<Paragraph>, val alignments: List<Alignment>) {
@@ -40,7 +42,10 @@ data class Chapter(val id: String, val title: String, val paragraphs: List<Parag
         if (complete && text.isNotEmpty()) "已配中文" else "部分配有中文"
     }
 }
-data class Book(val id: String, val title: String, val author: String, val chapters: List<Chapter>, val importedAt: Long) {
+data class ContentsEntry(val title: String, val chapter: Int, val paragraph: Int = 0, val character: Int = 0, val depth: Int = 0)
+
+data class Book(val id: String, val title: String, val author: String, val chapters: List<Chapter>, val importedAt: Long,
+    val sourceFormat: String = "", val contents: List<ContentsEntry> = emptyList()) {
     val wordCount: Int by lazy { chapters.sumOf { it.wordCount } }
     val isChinese: Boolean by lazy { chapters.filter { c -> c.paragraphs.any { !it.heading } }.let { body -> body.isNotEmpty() && body.count { it.isChinese } > body.size / 2 } }
     val countLabel: String get() = if (isChinese) "${chapters.sumOf { it.characterCount }.formatWords()} 字" else "${wordCount.formatWords()} 词"
@@ -112,6 +117,10 @@ object Alignments {
             p.units.forEach { require(it.start >= 0 && it.end > it.start && it.end <= p.text.length) { "句子边界超出正文：${p.id}" } }
             p.units.sortedBy { it.start }.zipWithNext().forEach { (a, b) -> require(a.end <= b.start) { "句子边界重叠：${p.id}" } }
             p.notes.forEach { require(it.start >= 0 && it.end > it.start && it.end <= p.text.length) { "注释超出正文：${p.id}" } }
+            p.annotations.forEach {
+                require(it.start >= 0 && it.end > it.start && it.end <= p.text.length) { "注释超出正文：${p.id}" }
+                require(it.text.isNotBlank()) { "注释内容不能为空：${p.id}" }
+            }
         }
         require(chapter.alignments.map { it.id }.distinct().size == chapter.alignments.size) { "译文标记重复" }
         chapter.alignments.forEach { a ->

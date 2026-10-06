@@ -10,7 +10,7 @@
         {
           "id": "p1",
           "sentences": [
-            {"en": "The rain stopped.", "zh": "雨停了。"},
+            {"en": "The rain stopped.", "zh": "雨停了。", "translation_source": "ai"},
             {"en": "She opened the window. The room filled with cool air.", "zh": "她推开窗，凉爽的空气涌进屋里。"}
           ]
         },

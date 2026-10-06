@@ -4,6 +4,14 @@ plugins {
 }
 
 android {
+    ndkVersion = "28.2.13676358"
+    externalNativeBuild {
+        cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" }
+    }
+    ndkVersion = "28.2.13676358"
+    externalNativeBuild {
+        cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" }
+    }
     namespace = "com.jknl.englishreader"
     compileSdk {
         version = release(37)
@@ -13,8 +21,8 @@ android {
         applicationId = "com.jknl.englishreader"
         minSdk = 24
         targetSdk = 37
-        versionCode = 2
-        versionName = "0.1.0"
+        versionCode = 3
+        versionName = "0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -49,6 +57,8 @@ android {
 }
 
 dependencies {
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("androidx.exifinterface:exifinterface:1.4.2")
     implementation("org.jsoup:jsoup:1.23.2")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")

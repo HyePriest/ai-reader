@@ -1,7 +1,6 @@
 package com.jknl.englishreader.data
 
 import org.w3c.dom.Element
-import org.w3c.dom.Node
 import org.xml.sax.InputSource
 import java.io.ByteArrayInputStream
 import java.io.InputStream
@@ -13,7 +12,7 @@ import javax.xml.parsers.DocumentBuilderFactory
 
 /** Text-first EPUB importer. No archive paths are ever written to the filesystem. */
 class EpubImporter {
-    fun read(input: InputStream): Book {
+    fun read(input: InputStream, onCover: (String, ByteArray) -> Unit = { _, _ -> }): Book {
         val files = linkedMapOf<String, ByteArray>()
         var total = 0L
         ZipInputStream(input).use { zip ->
@@ -45,104 +44,129 @@ class EpubImporter {
         val title = opf.getElementsByTagNameNS("*", "title").item(0)?.textContent?.trim().orEmpty().ifEmpty { "未命名书籍" }
         val author = opf.getElementsByTagNameNS("*", "creator").item(0)?.textContent?.trim().orEmpty().ifEmpty { "作者未注明" }
         val manifest = mutableMapOf<String, String>()
+        val navigation = mutableSetOf<String>()
+        val tocPaths = mutableListOf<String>()
+        val coverPaths = mutableListOf<String>()
+        val coverId = (0 until opf.getElementsByTagNameNS("*", "meta").length).map { opf.getElementsByTagNameNS("*", "meta").item(it) as Element }
+            .firstOrNull { it.getAttribute("name") == "cover" }?.getAttribute("content")
         val items = opf.getElementsByTagNameNS("*", "item")
         for (i in 0 until items.length) {
             val e = items.item(i) as Element
+            if (e.getAttribute("properties").split(Regex("\\s+")).contains("cover-image") || e.getAttribute("id") == coverId)
+                coverPaths += resolve(opfPath, e.getAttribute("href"))
             if (e.getAttribute("media-type") in setOf("application/xhtml+xml", "text/html")) {
                 manifest[e.getAttribute("id")] = resolve(opfPath, e.getAttribute("href"))
+                if (e.getAttribute("properties").split(Regex("\\s+")).contains("nav")) navigation += e.getAttribute("id")
+            }
+            if (e.getAttribute("media-type") == "application/x-dtbncx+xml") tocPaths += resolve(opfPath, e.getAttribute("href"))
+        }
+        val chapterTitles = mutableMapOf<String, String>()
+        data class TocLink(val label: String, val target: HtmlReferences.Target, val depth: Int)
+        val tocLinks = mutableListOf<TocLink>()
+        navigation.mapNotNull { manifest[it] }.forEach { navPath ->
+            files[navPath]?.let { bytes ->
+                val nav = org.jsoup.Jsoup.parse(DocumentImporter.decode(bytes))
+                val toc = nav.select("nav[epub:type~=toc], nav[role=doc-toc]").ifEmpty { nav.select("nav").filter { it.attr("epub:type") !in setOf("landmarks", "page-list") }.let { org.jsoup.select.Elements(it) } }
+                toc.select("li").forEach { li ->
+                    val label = li.children().firstOrNull { it.normalName() in setOf("a", "span") } ?: return@forEach
+                    val a = if (label.normalName() == "a") label else li.selectFirst("a[href]") ?: return@forEach
+                    HtmlReferences.resolve(navPath, a.attr("href"))?.let { target ->
+                        if (label.text().isNotBlank()) {
+                            chapterTitles.putIfAbsent(target.path, label.text())
+                            tocLinks += TocLink(label.text(), target, (li.parents().count { it.normalName() == "ol" } - 1).coerceAtLeast(0))
+                        }
+                    }
+                }
+                if (tocLinks.isEmpty()) toc.select("a[href]").forEach { a ->
+                    HtmlReferences.resolve(navPath, a.attr("href"))?.let { target ->
+                        if (a.text().isNotBlank()) { chapterTitles.putIfAbsent(target.path, a.text()); tocLinks += TocLink(a.text(), target, 0) }
+                    }
+                }
             }
         }
+        if (tocLinks.isEmpty()) tocPaths.forEach { tocPath -> files[tocPath]?.let { bytes ->
+            val ncx = xml(bytes)
+            val points = ncx.getElementsByTagNameNS("*", "navPoint")
+            for (i in 0 until points.length) {
+                val point = points.item(i) as Element
+                val href = (point.getElementsByTagNameNS("*", "content").item(0) as? Element)?.getAttribute("src").orEmpty()
+                val label = point.getElementsByTagNameNS("*", "navLabel").item(0)?.textContent?.trim().orEmpty()
+                if (href.isNotBlank() && label.isNotBlank()) HtmlReferences.resolve(tocPath, href)?.let { target ->
+                    chapterTitles.putIfAbsent(target.path, label)
+                    var depth = 0; var parent = point.parentNode
+                    while (parent != null) { if (parent.localName == "navPoint") depth++; parent = parent.parentNode }
+                    tocLinks += TocLink(label, target, depth)
+                }
+            }
+        } }
         val refs = opf.getElementsByTagNameNS("*", "itemref")
         val chapters = mutableListOf<Chapter>()
+        val documents = manifest.values.distinct().mapNotNull { path -> files[path]?.let { bytes ->
+            val raw = DocumentImporter.decode(bytes)
+            require(!raw.contains("<!ENTITY", ignoreCase = true)) { "暂不支持包含自定义 XML 实体的 EPUB" }
+            path to org.jsoup.Jsoup.parse(raw)
+        } }.toMap()
+        val references = HtmlReferences(documents)
+        val anchorsByPath = mutableMapOf<String, Map<String, SourceRange>>()
+        val guideLabels = mutableMapOf<String, String>()
+        val guide = opf.getElementsByTagNameNS("*", "reference")
+        for (i in 0 until guide.length) {
+            val e = guide.item(i) as Element
+            val target = HtmlReferences.resolve(opfPath, e.getAttribute("href")) ?: continue
+            guideLabels[target.path] = e.getAttribute("title").ifBlank { when (e.getAttribute("type")) {
+                "toc" -> "目录"; "cover" -> "封面"; "preface" -> "前言"; "copyright-page" -> "版权页"; "notes" -> "注释"; else -> "正文"
+            } }
+            if (e.getAttribute("type") == "cover") documents[target.path]?.selectFirst("img[src], image")?.let { image ->
+                val href = image.attr("src").ifBlank { image.attr("xlink:href").ifBlank { image.attr("href") } }
+                HtmlReferences.resolve(target.path, href)?.let { coverPaths += it.path }
+            }
+        }
         val digest = MessageDigest.getInstance("SHA-256")
         digest.update(title.toByteArray(Charsets.UTF_8))
-        for (i in 0 until refs.length) {
+        val readingPaths = (0 until refs.length).mapNotNull { i ->
             val e = refs.item(i) as Element
-            if (e.getAttribute("linear") == "no") continue
-            val path = requireNotNull(manifest[e.getAttribute("idref")]) { "EPUB 正文格式暂不支持" }
+            manifest[e.getAttribute("idref")]
+        }.toMutableList()
+        readingPaths += tocLinks.map { it.target.path }.filter { it in documents && it !in readingPaths }
+        documents.forEach { (path, doc) -> doc.select("a[href]").forEach { a ->
+            if (references.note(path, a) != null) HtmlReferences.resolve(path, a.attr("href"))?.let { target ->
+                if (target.path in documents && target.path !in readingPaths) readingPaths += target.path
+                if (target.path != path) guideLabels.putIfAbsent(target.path, "注释")
+            }
+        } }
+        for (path in readingPaths.distinct()) {
             val bytes = requireNotNull(files[path]) { "找不到章节文件：$path" }
             digest.update(path.toByteArray(Charsets.UTF_8))
             digest.update(bytes)
-            val chapter = chapter(path, bytes, chapters.size + 1)
+            // Keep the original source fingerprint stable even when a navigation page is omitted.
+            val body = requireNotNull(documents[path]).body().clone()
+            if (path in navigation.mapNotNull { manifest[it] }) body.select("nav").remove()
+            val parsed = HtmlChapterReader.read(body, path, guideLabels[path] ?: chapterTitles[path] ?: "正文",
+                noteText = { references.note(path, it) }, onAnchors = { anchorsByPath[path] = it })
+            val chapter = parsed.copy(title = chapterTitles[path] ?: guideLabels[path] ?: parsed.title)
             if (chapter.paragraphs.isNotEmpty()) chapters += chapter
         }
         require(chapters.isNotEmpty()) { "没有找到可阅读的正文（暂不支持扫描或加密书籍）" }
         require(chapters.map { it.id }.distinct().size == chapters.size) { "EPUB 章节路径重复" }
         val id = digest.digest().joinToString("") { "%02x".format(it) }.take(24)
-        return Book(id, title, author, chapters, System.currentTimeMillis())
-    }
-
-    private fun chapter(path: String, bytes: ByteArray, number: Int): Chapter {
-        val doc = xml(bytes)
-        val body = doc.getElementsByTagNameNS("*", "body").item(0) ?: doc.documentElement
-        val paragraphs = mutableListOf<Paragraph>()
-        val anchors = mutableMapOf<String, SourceRange>()
-        val pending = mutableListOf<Pair<List<String>, String>>()
-        val blocks = setOf("p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "pre")
-
-        fun addBlock(element: Element) {
-            val builder = StringBuilder()
-            val marks = mutableListOf<Mark>()
-            val localAnchors = mutableListOf<Pair<String, IntRange>>()
-            fun inline(node: Node) {
-                if (node.nodeType == Node.TEXT_NODE || node.nodeType == Node.CDATA_SECTION_NODE) {
-                    // Collapse HTML whitespace while preserving space across inline element boundaries.
-                    node.nodeValue.forEach { c ->
-                        if (c.isWhitespace() || c == '\u00a0') {
-                            if (builder.isNotEmpty() && builder.last() != ' ') builder.append(' ')
-                        } else builder.append(c)
-                    }
-                    return
-                }
-                val e = node as? Element ?: return
-                val tag = (e.localName ?: e.tagName).lowercase()
-                if (tag in setOf("script", "style", "rt", "rp")) return
-                if (tag == "br") { if (builder.isNotEmpty() && builder.last() != ' ') builder.append(' '); return }
-                val start = builder.length
-                for (i in 0 until e.childNodes.length) inline(e.childNodes.item(i))
-                val end = builder.length
-                if (end > start) {
-                    if (tag in setOf("i", "em")) marks += Mark(start, end, "italic")
-                    if (tag in setOf("b", "strong")) marks += Mark(start, end, "bold")
-                    val anchor = e.getAttribute("data-er-id").ifEmpty { e.getAttribute("id") }
-                    if (anchor.isNotEmpty()) localAnchors += anchor to (start until end)
-                }
-            }
-            inline(element)
-            val text = builder.toString().trimEnd()
-            if (text.isBlank()) return
-            val id = "p${paragraphs.size}"
-            paragraphs += Paragraph(id, text, (element.localName ?: element.tagName).matches(Regex("h[1-6]")),
-                marks.map { it.copy(end = it.end.coerceAtMost(text.length)) }.filter { it.start < it.end })
-            localAnchors.forEach { (anchor, range) ->
-                val end = (range.last + 1).coerceAtMost(text.length)
-                require(!anchors.containsKey(anchor)) { "章节 $number 中的英文标记 $anchor 重复" }
-                if (end > range.first) anchors[anchor] = SourceRange(id, range.first, end)
+        val contents = tocLinks.mapNotNull { link ->
+            val ci = chapters.indexOfFirst { it.id == link.target.path }
+            if (ci < 0) return@mapNotNull null
+            val anchor = anchorsByPath[link.target.path]?.get(link.target.fragment)
+            // A missing fragment cannot silently send the reader to the wrong subsection.
+            if (link.target.fragment.isNotEmpty() && anchor == null) return@mapNotNull null
+            val pi = anchor?.let { a -> chapters[ci].paragraphs.indexOfFirst { it.id == a.paragraph } } ?: 0
+            ContentsEntry(link.label, ci, pi.coerceAtLeast(0), anchor?.start ?: 0, link.depth)
+        }.distinct()
+        val completeContents = contents.toMutableList()
+        chapters.forEachIndexed { ci, c ->
+            if (contents.none { it.chapter == ci }) {
+                val at = completeContents.indexOfFirst { it.chapter > ci }.let { if (it < 0) completeContents.size else it }
+                completeContents.add(at, ContentsEntry(c.title, ci))
             }
         }
-
-        fun visit(node: Node) {
-            val e = node as? Element ?: return
-            val tag = (e.localName ?: e.tagName).lowercase()
-            if (tag in setOf("script", "style", "head", "nav")) return
-            val targets = e.getAttribute("data-er-for")
-            if (targets.isNotBlank()) {
-                val chinese = e.textContent.trim()
-                require(chinese.isNotBlank()) { "章节 $number 有空中文译文" }
-                pending += targets.trim().split(Regex("\\s+")) to chinese
-                return
-            }
-            if (tag in blocks) {
-                val nested = (0 until e.childNodes.length).any { (e.childNodes.item(it) as? Element)?.let { child -> (child.localName ?: child.tagName).lowercase() in blocks } == true }
-                if (!nested) { addBlock(e); return }
-            }
-            for (i in 0 until e.childNodes.length) visit(e.childNodes.item(i))
-        }
-        visit(body)
-        val alignments = pending.mapIndexed { i, (targets, chinese) ->
-            Alignment("epub-$i", targets.map { requireNotNull(anchors[it]) { "章节 $number 的中文找不到英文标记：$it" } }, chinese, "双语 EPUB")
-        }
-        return Chapter(path, paragraphs.firstOrNull { it.heading }?.text ?: "第 $number 节", paragraphs, alignments).also(Alignments::validate)
+        coverPaths.distinct().firstNotNullOfOrNull { files[it] }?.let { onCover(id, it) }
+        return Book(id, title, author, chapters, System.currentTimeMillis(), "epub", completeContents)
     }
 
     private fun xml(bytes: ByteArray): org.w3c.dom.Document {
@@ -156,9 +180,9 @@ class EpubImporter {
         val builder = factory.newDocumentBuilder()
         builder.setEntityResolver { _, _ -> InputSource(StringReader("")) }
         // EPUB 2 often declares an external XHTML DTD. Never resolve it; retain numeric/XML entities.
-        var source = bytes.toString(Charsets.UTF_8)
+        var source = DocumentImporter.decode(bytes)
         require(!source.contains("<!ENTITY", ignoreCase = true)) { "暂不支持包含自定义 XML 实体的 EPUB" }
-        source = source.replace(Regex("<!DOCTYPE[^>]*>", RegexOption.IGNORE_CASE), "").replace("&nbsp;", "&#160;")
+        source = source.replace(Regex("<\\?xml[^>]*\\?>", RegexOption.IGNORE_CASE), "").replace(Regex("<!DOCTYPE[^>]*>", RegexOption.IGNORE_CASE), "").replace("&nbsp;", "&#160;")
         require(!source.contains("<!DOCTYPE", ignoreCase = true)) { "EPUB 的 XML 声明无效" }
         return builder.parse(ByteArrayInputStream(source.toByteArray(Charsets.UTF_8)))
     }

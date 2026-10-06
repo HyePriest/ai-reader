@@ -41,6 +41,13 @@ fun EnglishReaderTheme(
             onBackground = Color(0xFFF3EEE4), onSurface = Color(0xFFF3EEE4), onSurfaceVariant = Color(0xFFABBECD),
             secondary = Color(0xFFDCC8A3), outline = Color(0xFF60798B), primaryContainer = Color(0xFF28485E))
         palette == "night" -> DarkColorScheme
+        palette == "black" -> darkColorScheme(
+            background = Color.Black, surface = Color(0xFF171717),
+            primary = Color(0xFFD0D0D0), onPrimary = Color.Black,
+            onBackground = Color(0xFFE6E6E6), onSurface = Color(0xFFE6E6E6),
+            onSurfaceVariant = Color(0xFFB0B0B0), surfaceVariant = Color(0xFF292929),
+            primaryContainer = Color(0xFF3B3B3B), onPrimaryContainer = Color.White,
+            surfaceContainerLow = Color(0xFF171717), outline = Color(0xFF777777))
         palette == "white" -> LightColorScheme.copy(background = Color(0xFFFAFAFA), surface = Color.White)
         palette == "sage" -> LightColorScheme.copy(background = Color(0xFFE4ECDf), surface = Color(0xFFEFF4E9), surfaceContainerLow = Color(0xFFEFF4E9))
         palette == "blue" -> LightColorScheme.copy(background = Color(0xFFE4ECF2), surface = Color(0xFFF0F5F8), surfaceContainerLow = Color(0xFFF0F5F8),

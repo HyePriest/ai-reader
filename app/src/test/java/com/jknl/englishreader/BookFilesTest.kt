@@ -4,7 +4,7 @@ import com.jknl.englishreader.data.*
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
-
+import java.io.File
 
 class BookFilesTest {
     private val html = """<!DOCTYPE html><html><head><title>Original sample</title></head><body>
@@ -74,5 +74,22 @@ on a branch.</pre></div></section>
         assertEquals(second, toggleSelection(first, second))
     }
 
+    @Test fun validateActualReadingLibraryWhenAvailable() {
+        val path = System.getenv("ENGLISHREADER_HTML_DIR") ?: return
+        val files = File(path).listFiles { f -> f.extension.lowercase() == "html" }!!.sortedBy { it.name }
+        assertEquals(5, files.size)
+        val report = files.map { file ->
+            val book = file.inputStream().use(BookFiles::read)
+            assertTrue(book.chapters.isNotEmpty())
+            val translatedChapters = book.chapters.count { c -> c.alignments.any { it.ranges.any { r -> r.paragraph != "@title" } } }
+            if (file.name.startsWith("苏菲")) { assertEquals(35, book.chapters.size); assertEquals(3, translatedChapters) }
+            if (file.name.startsWith("爱丽丝")) assertEquals(12, book.chapters.size)
+            if (file.name.startsWith("仿生人")) assertEquals(22, book.chapters.size)
+            if (file.name.startsWith("Animal")) assertEquals(10, book.chapters.size)
+            "${file.name}\tchapters=${book.chapters.size}\tparagraphs=${book.chapters.sumOf { it.paragraphs.size }}\ttranslations=${book.chapters.sumOf { it.alignments.size }}\tnotes=${book.chapters.sumOf { c -> c.paragraphs.sumOf { it.notes.size } }}\ttranslatedChapters=$translatedChapters"
+        }
+        val animal = files.filter { it.name.startsWith("Animal") }.map { it.inputStream().use(BookFiles::read) }
+        assertEquals(animal[0].id, animal[1].id)
+        File("build/reports/legacy-import-summary.txt").apply { parentFile!!.mkdirs(); writeText(report.joinToString("\n")) }
+    }
 }
-
