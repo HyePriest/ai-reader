@@ -26,7 +26,7 @@ import kotlinx.coroutines.withContext
 @Composable
 internal fun ReadingPanel(selection: Selection, wordMode: Boolean, result: WordResult?, loading: Boolean, error: String?,
     height: Dp, saved: Boolean, saving: Boolean, saveMessage: String?, onSave: () -> Unit, onNotebook: () -> Unit,
-    onRetry: () -> Unit, onSettings: () -> Unit, onClose: () -> Unit) {
+    onRetry: () -> Unit, onSettings: () -> Unit, onClose: () -> Unit, onAsk: ((String?) -> Unit)? = null) {
     Surface(Modifier.testTag("translation-panel"), color = MaterialTheme.colorScheme.surface, shadowElevation = 5.dp) {
         Column(Modifier.fillMaxWidth().height(height).padding(horizontal = 22.dp, vertical = 8.dp)) {
             if (wordMode) Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -39,7 +39,15 @@ internal fun ReadingPanel(selection: Selection, wordMode: Boolean, result: WordR
             }
             key(selection.chapterIndex, selection.range, wordMode, selection.word, result) {
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (!wordMode) Text(selection.alignment?.chinese ?: "这里还没有译文。", fontSize = 17.sp, lineHeight = 29.sp)
+                    if (!wordMode && onAsk != null) Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        val compact = PaddingValues(horizontal = 12.dp)
+                        Button(onClick = { onAsk("翻译这句，并说明难点") }, contentPadding = compact, modifier = Modifier.testTag("translate-sentence")) { Text("翻译这句", fontSize = 13.sp, maxLines = 1) }
+                        OutlinedButton(onClick = { onAsk("分析这句的句子结构") }, contentPadding = compact) { Text("拆解", fontSize = 13.sp, maxLines = 1) }
+                        OutlinedButton(onClick = { onAsk(null) }, contentPadding = compact) { Text("问 AI", fontSize = 13.sp, maxLines = 1) }
+                        Spacer(Modifier.weight(1f))
+                        GlyphButton("close", "关闭", onClose)
+                    }
+                    else if (!wordMode) Text(selection.alignment?.chinese ?: "这里还没有译文。", fontSize = 17.sp, lineHeight = 29.sp)
                     else when {
                         loading -> {
                             LinearProgressIndicator(Modifier.fillMaxWidth())

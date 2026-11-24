@@ -48,10 +48,43 @@ class LibraryStore(private val context: Context) {
             .sortedByDescending { it.importedAt }
     }
 
-    fun import(uri: Uri): Book {
-        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readLimited(32 * 1024 * 1024) }
-            ?: error("无法打开选中的文件")
-        val book = BookFiles.read(bytes.inputStream(), fileName(uri)) { id, cover ->
+    fun import(uri: Uri): Book = importBytes(readUri(uri), fileName(uri))
+
+    private fun readUri(uri: Uri): ByteArray = context.contentResolver.openInputStream(uri)?.use { it.readLimited(32 * 1024 * 1024) }
+        ?: error("无法打开选中的文件")
+
+    /** An Economist issue becomes separate articles; every other file stays one book. */
+    fun importAny(uri: Uri): ImportResult {
+        val bytes = readUri(uri)
+        if (bytes.size >= 2 && bytes[0] == 80.toByte() && bytes[1] == 75.toByte())
+            EconomistIssue.readWithImages(bytes)?.let { return ImportResult.Issue(it.articles, it.images) }
+        // Converted past papers often start with an HTML comment, so only binary formats are excluded here.
+        else if (bytes.isNotEmpty() && bytes.size < 2 * 1024 * 1024 && !bytes.take(5).toByteArray().toString(Charsets.US_ASCII).startsWith("%PDF")) {
+            val text = DocumentImporter.decode(bytes)
+            if (ExamPaper.looksLike(text)) return ImportResult.Issue(ExamPaper.read(text))
+        }
+        return ImportResult.Single(importBytes(bytes, fileName(uri)))
+    }
+
+    /** Saves articles that are not on the device yet. Existing ones keep their progress and chats. */
+    @Synchronized fun saveNew(articles: List<Book>): List<Book> = articles.filter { !File(directory, "${it.id}.json").exists() }.onEach { save(it) }
+
+    fun saveImage(id: String, bytes: ByteArray) { runCatching { BookCovers(context).save(id, bytes) } }
+
+    fun exists(id: String) = id.matches(Regex("[a-f0-9]{24}")) && File(directory, "$id.json").exists()
+
+    /** Removes a book or article with its progress, reading position and saved AI conversation. */
+    @Synchronized fun delete(id: String) {
+        require(id.matches(Regex("[a-f0-9]{24}")))
+        listOf("json", "index", "undo", "pdf").forEach { AtomicFile(File(directory, "$id.$it")).delete() }
+        opened.remove(id)
+        preferences.edit().remove("$id.chapter").remove("$id.paragraph").remove("$id.character").apply()
+        runCatching { BookCovers(context).remove(id) }
+        ArticleChats(context).clear(id)
+    }
+
+    private fun importBytes(bytes: ByteArray, name: String): Book {
+        val book = BookFiles.read(bytes.inputStream(), name) { id, cover ->
             val covers = BookCovers(context)
             if (!covers.file(id).exists()) runCatching { covers.save(id, cover) }
         }
@@ -139,6 +172,12 @@ class LibraryStore(private val context: Context) {
     fun encode(book: Book): String = JSONObject().apply {
         put("schema", 1); put("id", book.id); put("title", book.title); put("author", book.author); put("importedAt", book.importedAt)
         put("sourceFormat", book.sourceFormat)
+        if (book.collection.isNotEmpty()) put("collection", book.collection)
+        if (book.section.isNotEmpty()) put("section", book.section)
+        if (book.subtitle.isNotEmpty()) put("subtitle", book.subtitle)
+        if (book.source.isNotEmpty()) put("source", book.source)
+        if (book.titleZh.isNotEmpty()) put("titleZh", book.titleZh)
+        if (book.questions.isNotEmpty()) put("questions", ExamQuestion.encode(book.questions))
         put("contents", array(book.contents.map { e -> JSONObject().put("title", e.title).put("chapter", e.chapter)
             .put("paragraph", e.paragraph).put("character", e.character).put("depth", e.depth) }))
         put("chapters", array(book.chapters.map { chapter -> JSONObject().apply {
@@ -178,6 +217,32 @@ class LibraryStore(private val context: Context) {
                 }).also(Alignments::validate)
             }, root.getLong("importedAt"), root.optString("sourceFormat", ""),
             (root.optJSONArray("contents") ?: JSONArray()).objects().map { e -> ContentsEntry(e.getString("title"), e.getInt("chapter"),
-                e.optInt("paragraph"), e.optInt("character"), e.optInt("depth")) })
+                e.optInt("paragraph"), e.optInt("character"), e.optInt("depth")) },
+            root.optString("collection", ""), root.optString("section", ""), root.optString("subtitle", ""), root.optString("source", ""),
+            root.optString("titleZh", ""), root.optJSONArray("questions")?.let { ExamQuestion.decode(it) } ?: emptyList())
     }
+}
+
+sealed interface ImportResult {
+    data class Single(val book: Book) : ImportResult
+    data class Issue(val articles: List<Book>, val images: Map<String, ByteArray> = emptyMap()) : ImportResult
+}
+
+/** One saved whole-article conversation per article, kept on the device only. */
+class ArticleChats(context: Context) {
+    private val directory = File(context.filesDir, "chats").apply { mkdirs() }
+    private fun file(id: String): AtomicFile { require(id.matches(Regex("[a-f0-9]{24}|qa"))); return AtomicFile(File(directory, "$id.json")) }
+    fun read(id: String): List<ReadingExchange> = runCatching {
+        val a = JSONArray(file(id).openRead().bufferedReader().use { it.readText() })
+        (0 until a.length()).map { a.getJSONObject(it).let { e -> ReadingExchange(e.getString("q"), e.getString("a")) } }
+    }.getOrDefault(emptyList())
+    fun write(id: String, history: List<ReadingExchange>) {
+        val atomic = file(id)
+        val output = atomic.startWrite()
+        try {
+            val a = JSONArray().apply { history.takeLast(60).forEach { put(JSONObject().put("q", it.question).put("a", it.answer)) } }
+            output.write(a.toString().toByteArray(Charsets.UTF_8)); atomic.finishWrite(output)
+        } catch (e: Exception) { atomic.failWrite(output); throw e }
+    }
+    fun clear(id: String) { file(id).delete() }
 }

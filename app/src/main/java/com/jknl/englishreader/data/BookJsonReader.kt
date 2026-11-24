@@ -10,6 +10,8 @@ internal object BookJsonReader {
         var id: String? = null; var title: String? = null; var author: String? = null
         var importedAt: Long? = null; var chapters: List<Chapter>? = null
         var sourceFormat = ""
+        var collection = ""; var section = ""; var subtitle = ""; var source = ""; var titleZh = ""
+        var questions = emptyList<ExamQuestion>()
         var contents = emptyList<ContentsEntry>()
         r.fields { name -> when (name) {
             "schema" -> schema = r.nextInt()
@@ -18,6 +20,20 @@ internal object BookJsonReader {
             "author" -> author = r.nextString()
             "importedAt" -> importedAt = r.nextLong()
             "sourceFormat" -> sourceFormat = r.nextString()
+            "collection" -> collection = r.nextString()
+            "section" -> section = r.nextString()
+            "subtitle" -> subtitle = r.nextString()
+            "source" -> source = r.nextString()
+            "titleZh" -> titleZh = r.nextString()
+            "questions" -> questions = r.items {
+                var number = 0; var stem = ""; val options = mutableListOf<String>()
+                r.fields { when (it) {
+                    "number" -> number = r.nextInt(); "stem" -> stem = r.nextString()
+                    "options" -> { r.beginArray(); while (r.hasNext()) options += r.nextString(); r.endArray() }
+                    else -> r.skipValue()
+                } }
+                ExamQuestion(number, stem, options)
+            }
             "contents" -> contents = r.items {
                 var label = ""; var chapter = 0; var paragraph = 0; var character = 0; var depth = 0
                 r.fields { when (it) {
@@ -32,7 +48,8 @@ internal object BookJsonReader {
         } }
         require(schema == 1) { "这本书的数据版本暂不支持，请保留原文件" }
         Book(requireNotNull(id), requireNotNull(title), requireNotNull(author),
-            requireNotNull(chapters).also { require(it.isNotEmpty()) }, requireNotNull(importedAt), sourceFormat, contents)
+            requireNotNull(chapters).also { require(it.isNotEmpty()) }, requireNotNull(importedAt), sourceFormat, contents,
+            collection, section, subtitle, source, titleZh, questions)
     }
 
     private fun chapter(r: JsonReader): Chapter {

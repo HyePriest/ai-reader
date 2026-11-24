@@ -96,6 +96,10 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
     var aiPreview by remember { mutableStateOf(emptyList<PassageRange>()) }
     var aiQuestion by remember { mutableStateOf<ReadingQuestion?>(null) }
     var aiError by remember { mutableStateOf<String?>(null) }
+    var aiInitial by remember { mutableStateOf<String?>(null) }
+    var examOpen by rememberSaveable { mutableStateOf(false) }
+    val chats = remember { ArticleChats(context.applicationContext) }
+    fun askArticle(question: ReadingQuestion, initial: String? = null) { aiInitial = initial; aiRanges = question.passages; aiQuestion = question }
     var annotation by remember { mutableStateOf<Pair<Paragraph, Int>?>(null) }
     ReadingSession(book.id, trackingEnabled && !contents && !searchOpen && !notebookOpen && editing == null && !pdfOriginal)
     if (pdfOriginal) PdfOriginalDialog(book, chapterIndex) { pdfOriginal = false }
@@ -178,14 +182,21 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
             if (chrome && !selectingAi) Surface(modifier = Modifier.pointerInput(Unit) { detectTapGestures(onTap = {}) },
                 color = MaterialTheme.colorScheme.background, shadowElevation = 1.dp) {
                 Row(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).heightIn(min = 72.dp).testTag("reader-toolbar").padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    GlyphButton("back", "返回书架", onBack)
-                    Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                    GlyphButton("back", if (book.isArticle) "返回" else "返回书架", onBack)
+                    if (book.isArticle) Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                        Text(book.title, fontSize = 14.sp, lineHeight = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(listOf(book.section, book.author).filter { it.isNotBlank() }.joinToString("  ·  "), fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(book.countLabel, fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
                         Text(book.title, fontSize = 14.sp, lineHeight = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text("${book.chapters[chapterIndex].title}  ·  ${book.chapters[chapterIndex].coverage()}", fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("全书 ${book.countLabel} · 本章 ${book.chapters[chapterIndex].countLabel}", fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    GlyphButton("search", "搜索本书", { closePanel(); searchOpen = true })
-                    GlyphButton("list", "目录", { contents = true })
+                    if (book.questions.isNotEmpty()) TextButton(onClick = { closePanel(); examOpen = true }, modifier = Modifier.testTag("open-exam")) { Text("做题") }
+                    if (book.isArticle) TextButton(onClick = { closePanel(); askArticle(ReadingQuestions.wholeArticle(book)) },
+                        modifier = Modifier.testTag("ask-article")) { Text("问 AI") }
+                    GlyphButton("search", if (book.isArticle) "搜索全文" else "搜索本书", { closePanel(); searchOpen = true })
+                    if (!book.isArticle) GlyphButton("list", "目录", { contents = true })
                     if (book.sourceFormat == "pdf") TextButton(onClick = { pdfOriginal = true }) { Text("原页") }
                     GlyphButton("type", "阅读设置", onSettings)
                 }
@@ -213,12 +224,21 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
                     } }
                 }, onNotebook = { notebookOpen = true },
                 onRetry = { lookup(s) }, onSettings = { chrome = true; onSettings() },
-                onClose = ::closePanel) }
+                onClose = ::closePanel,
+                onAsk = if (!book.isArticle || s.alignment != null) null else { initial ->
+                    val paragraph = book.chapters[s.chapterIndex].paragraphs.indexOfFirst { it.id == s.paragraph.id }
+                    runCatching { ReadingQuestions.selection(book, listOf(PassageRange(s.chapterIndex, paragraph, s.range.start, s.range.end))) }
+                        .onSuccess { closePanel(); askArticle(it, initial) }.onFailure { aiError = it.message }
+                }) }
         }
     }
     annotation?.let { (paragraph, index) -> AnnotationDialog(paragraph, index, onDismiss = { annotation = null }) }
+    if (examOpen) ExamSheet(book, onDismiss = { examOpen = false }, onExplain = { prompt -> examOpen = false; askArticle(ReadingQuestions.wholeArticle(book), prompt) })
     aiQuestion?.let { question -> ReadingQuestionSheet(question,
-        onDismiss = { aiQuestion = null; aiRanges = emptyList() },
+        initialHistory = remember(question) { if (question.wholeArticle) chats.read(book.id) else emptyList() },
+        onHistory = { history -> if (question.wholeArticle) scope.launch(Dispatchers.IO) { runCatching { if (history.isEmpty()) chats.clear(book.id) else chats.write(book.id, history) } } },
+        initialQuestion = aiInitial,
+        onDismiss = { aiQuestion = null; aiRanges = emptyList(); aiInitial = null },
         onReselect = { aiQuestion = null; aiRanges = emptyList(); aiPreview = emptyList(); selectingAi = true },
         onAppend = { aiQuestion = null; aiPreview = emptyList(); selectingAi = true }) }
     aiError?.let { message -> AlertDialog(onDismissRequest = { aiError = null }, text = { Text(message) },
