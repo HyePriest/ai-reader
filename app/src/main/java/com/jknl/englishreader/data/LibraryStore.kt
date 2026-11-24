@@ -155,8 +155,8 @@ class LibraryStore(private val context: Context) {
     }
 
     fun settings() = ReaderSettings(
-        preferences.getFloat("size", 21f).coerceIn(16f, 30f),
-        preferences.getFloat("spacing", 1.7f).coerceIn(1.3f, 2.2f),
+        preferences.getFloat("size", 18f).coerceIn(16f, 30f),
+        preferences.getFloat("spacing", 1.6f).coerceIn(1.3f, 2.2f),
         preferences.getString("palette", "paper") ?: "paper",
         preferences.getBoolean("serif", true)
     )

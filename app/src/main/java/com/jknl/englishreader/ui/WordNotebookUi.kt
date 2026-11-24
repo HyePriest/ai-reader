@@ -116,7 +116,7 @@ internal fun WordNotebookDialog(notebook: WordNotebook? = null, onDismiss: () ->
                         else -> LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(groups, key = { it.first().id }) { group ->
                                 val record = group.first()
-                                ListItem(headlineContent = { Text(record.explanation.lemma, fontFamily = FontFamily.Serif, fontSize = 21.sp) },
+                                ListItem(headlineContent = { Text(record.explanation.lemma, fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif, fontSize = 21.sp) },
                                     supportingContent = { Column {
                                         Text(group.map { it.explanation.contextMeaning }.distinct().joinToString("；"), maxLines = 2, overflow = TextOverflow.Ellipsis)
                                         if (!recent) Text("${group.size} 处原句", fontSize = 11.sp)
@@ -151,7 +151,7 @@ internal fun WordNotebookDialog(notebook: WordNotebook? = null, onDismiss: () ->
                         Text(record.explanation.wordAdvice.reason, fontSize = 14.sp, lineHeight = 22.sp)
                         Text("遇到这个词的原句", fontWeight = FontWeight.SemiBold)
                         contexts.forEach { item ->
-                            Text(item.query.sentence, fontFamily = FontFamily.Serif, fontSize = 17.sp, lineHeight = 26.sp)
+                            Text(item.query.sentence, fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif, fontSize = 17.sp, lineHeight = 26.sp)
                             Text("此处：${item.explanation.contextMeaning}", fontWeight = FontWeight.SemiBold)
                             Text(item.explanation.contextExplanation, fontSize = 14.sp, lineHeight = 22.sp)
                             Text("此义 · ${StudyLevels.display(item.explanation.senseAdvice.decision)}：${item.explanation.senseAdvice.reason}", fontSize = 13.sp, lineHeight = 21.sp)

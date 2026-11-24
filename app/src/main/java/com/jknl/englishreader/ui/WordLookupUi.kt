@@ -31,7 +31,7 @@ internal fun ReadingPanel(selection: Selection, wordMode: Boolean, result: WordR
         Column(Modifier.fillMaxWidth().height(height).padding(horizontal = 22.dp, vertical = 8.dp)) {
             if (wordMode) Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 Text(selection.word.orEmpty(), modifier = Modifier.weight(1f),
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif,
                     fontSize = 23.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                     if (!loading && result != null) TextButton(enabled = !saved && !saving, onClick = onSave) { Text(if (saved) "已加入" else if (saving) "保存中…" else "加入生词本", fontSize = 12.sp) }
                 GlyphButton("book", "打开生词本", onNotebook)

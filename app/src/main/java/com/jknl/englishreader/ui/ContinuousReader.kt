@@ -177,38 +177,41 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
                         aiRanges = question.passages; aiQuestion = question; selectingAi = false; aiPreview = emptyList()
                     } catch (e: Exception) { aiError = e.message }
                 }, onAiCancel = { selectingAi = false; aiPreview = emptyList(); aiRanges = emptyList() },
-                searchHit = searchHit, searchJump = searchJump, onSearchJumpDone = { searchJump = null })
+                searchHit = searchHit, searchJump = searchJump, onSearchJumpDone = { searchJump = null },
+                onAskArticle = { prompt -> closePanel(); askArticle(ReadingQuestions.wholeArticle(book), prompt) }, onExam = { closePanel(); examOpen = true })
             // Overlay instead of inserting/removing a row above the list: no text jumps on title changes.
             if (chrome && !selectingAi) Surface(modifier = Modifier.pointerInput(Unit) { detectTapGestures(onTap = {}) },
-                color = MaterialTheme.colorScheme.background, shadowElevation = 1.dp) {
-                Row(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).heightIn(min = 72.dp).testTag("reader-toolbar").padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                color = MaterialTheme.colorScheme.background.copy(alpha = .97f)) {
+                Row(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).heightIn(min = 64.dp).testTag("reader-toolbar").padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     GlyphButton("back", if (book.isArticle) "返回" else "返回书架", onBack)
-                    if (book.isArticle) Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
-                        Text(book.title, fontSize = 14.sp, lineHeight = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(listOf(book.section, book.author).filter { it.isNotBlank() }.joinToString("  ·  "), fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(book.countLabel, fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (book.isArticle) Column(Modifier.weight(1f).padding(horizontal = 4.dp)) {
+                        Text(listOf(book.collection, book.section).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { book.author }, fontSize = 11.sp, lineHeight = 14.sp,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(book.titleZh.ifBlank { book.title }, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     } else Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
                         Text(book.title, fontSize = 14.sp, lineHeight = 20.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text("${book.chapters[chapterIndex].title}  ·  ${book.chapters[chapterIndex].coverage()}", fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("全书 ${book.countLabel} · 本章 ${book.chapters[chapterIndex].countLabel}", fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    if (book.questions.isNotEmpty()) TextButton(onClick = { closePanel(); examOpen = true }, modifier = Modifier.testTag("open-exam")) { Text("做题") }
-                    if (book.isArticle) TextButton(onClick = { closePanel(); askArticle(ReadingQuestions.wholeArticle(book)) },
-                        modifier = Modifier.testTag("ask-article")) { Text("问 AI") }
+                    val pill = PaddingValues(horizontal = 12.dp)
+                    if (book.questions.isNotEmpty()) FilledTonalButton(onClick = { closePanel(); examOpen = true }, contentPadding = pill,
+                        modifier = Modifier.height(34.dp).padding(end = 6.dp).testTag("open-exam")) { Text("做题", fontSize = 13.sp) }
+                    if (book.isArticle) FilledTonalButton(onClick = { closePanel(); askArticle(ReadingQuestions.wholeArticle(book)) }, contentPadding = pill,
+                        modifier = Modifier.height(34.dp).testTag("ask-article")) { Text("问 AI", fontSize = 13.sp) }
                     GlyphButton("search", if (book.isArticle) "搜索全文" else "搜索本书", { closePanel(); searchOpen = true })
                     if (!book.isArticle) GlyphButton("list", "目录", { contents = true })
                     if (book.sourceFormat == "pdf") TextButton(onClick = { pdfOriginal = true }) { Text("原页") }
                     GlyphButton("type", "阅读设置", onSettings)
                 }
             }
-            val progressColor = MaterialTheme.colorScheme.onBackground
-            Canvas(Modifier.fillMaxWidth().height(4.dp).align(androidx.compose.ui.Alignment.TopCenter)
+            val progressColor = MaterialTheme.colorScheme.primary
+            Canvas(Modifier.fillMaxWidth().height(3.dp).align(androidx.compose.ui.Alignment.TopCenter)
                 .testTag("chapter-progress").semantics {
                     contentDescription = "${book.chapters[chapterIndex].title} 阅读进度"
                     progressBarRangeInfo = ProgressBarRangeInfo(chapterProgress, 0f..1f)
                 }) {
-                drawRect(progressColor.copy(alpha = .14f))
-                drawRect(progressColor.copy(alpha = .85f), size = androidx.compose.ui.geometry.Size(size.width * chapterProgress, size.height))
+                drawRect(progressColor.copy(alpha = .12f))
+                drawRect(progressColor.copy(alpha = .9f), size = androidx.compose.ui.geometry.Size(size.width * chapterProgress, size.height))
             }
             }
             selection?.let { s -> ReadingPanel(s, wordMode, wordResult, loading, wordError,
@@ -286,7 +289,8 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
     onAnnotation: (Paragraph, Int) -> Unit,
     selectingAi: Boolean, aiRanges: List<PassageRange>, onAiPreview: (List<PassageRange>) -> Unit,
     onAiPicked: (List<PassageRange>) -> Unit, onAiCancel: () -> Unit,
-    searchHit: PassageRange?, searchJump: ReadingPosition?, onSearchJumpDone: () -> Unit) {
+    searchHit: PassageRange?, searchJump: ReadingPosition?, onSearchJumpDone: () -> Unit,
+    onAskArticle: (String?) -> Unit = {}, onExam: () -> Unit = {}) {
     val passageLayouts = remember { mutableStateMapOf<String, PassageLayout>() }
     val passageBounds = remember { mutableStateMapOf<String, Rect>() }
     val layouts = remember { mutableStateMapOf<String, TextLayoutResult>() }
@@ -326,9 +330,9 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
         val index = rows.indexOfFirst { it.chapter == anchor.chapter && it.paragraphIndex == anchor.paragraph }.coerceAtLeast(0)
         val row = rows[index]
         snapshotFlow { layouts[row.key] }.collect { layout ->
-            val expected = if (row.paragraph.heading) settings.size + 5 else settings.size
-            if (restoring && layout != null && kotlin.math.abs(layout.layoutInput.style.fontSize.value - expected) < .1f &&
-                kotlin.math.abs(layout.layoutInput.style.lineHeight.value - settings.size * settings.spacing) < .1f) {
+            val style = ReadingStyle.of(book, row.paragraph, settings)
+            if (restoring && layout != null && kotlin.math.abs(layout.layoutInput.style.fontSize.value - style.size) < .1f &&
+                kotlin.math.abs(layout.layoutInput.style.lineHeight.value - style.line) < .1f) {
                 val line = layout.getLineForOffset(anchor.character.coerceIn(0, row.paragraph.text.length))
                 list.scrollToItem(index, layout.getLineTop(line).toInt()); restoring = false
             }
@@ -396,13 +400,19 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
     Box(modifier) {
     LazyColumn(state = list, userScrollEnabled = !selectingAi, modifier = Modifier.fillMaxSize().testTag("reading-body").nestedScroll(scroll)
         .pointerInput(Unit) { detectTapGestures(onTap = { latestBlank() }) },
-        contentPadding = PaddingValues(start = 26.dp, end = 26.dp,
-            top = 88.dp + WindowInsets.displayCutout.asPaddingValues().calculateTopPadding(), bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        contentPadding = PaddingValues(start = 24.dp, end = 24.dp,
+            top = 84.dp + WindowInsets.displayCutout.asPaddingValues().calculateTopPadding(), bottom = 48.dp),
+        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy((settings.size * .85f).dp)) {
         items(rows, key = { it.key }) { row ->
             val p = row.paragraph
             if (p.pdfPage != null) {
                 PdfPageImage(book.id, p.pdfPage)
+                return@items
+            }
+            if (book.isArticle && p.heading && p.id == "@title") {
+                DisposableEffect(row.key) { onDispose { layouts.remove(row.key) } }
+                ArticleHeader(book, settings, Modifier.widthIn(max = ReadingStyle.measure).fillMaxWidth()) { layouts[row.key] = it }
                 return@items
             }
             val chapter = book.chapters[row.chapter]
@@ -432,12 +442,13 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
             }
             val latestSelect by rememberUpdatedState(selectAt)
             DisposableEffect(row.key) { onDispose { layouts.remove(row.key); passageLayouts.remove(row.key); passageBounds.remove(row.key) } }
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(annotated, fontFamily = if (settings.serif) FontFamily.Serif else FontFamily.SansSerif,
-                fontSize = (if (p.heading) settings.size + 5 else settings.size).sp,
-                lineHeight = (settings.size * settings.spacing).sp, fontWeight = if (p.heading) FontWeight.SemiBold else FontWeight.Normal,
+            val style = ReadingStyle.of(book, p, settings)
+            Column(Modifier.widthIn(max = ReadingStyle.measure).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(annotated, fontFamily = style.family, fontSize = style.size.sp, lineHeight = style.line.sp, fontWeight = style.weight,
+                style = LocalTextStyle.current.merge(TextStyle(hyphens = androidx.compose.ui.text.style.Hyphens.Auto,
+                    lineBreak = androidx.compose.ui.text.style.LineBreak.Paragraph, color = MaterialTheme.colorScheme.onBackground)),
                 onTextLayout = { layout -> layouts[row.key] = layout; passageBounds[row.key]?.let { bounds -> passageLayouts[row.key] = PassageLayout(row, bounds, layout) } }, modifier = Modifier.fillMaxWidth().testTag("paragraph-${row.chapter}-${row.paragraphIndex}")
-                    .then(if (p.heading && row.chapter > 0) Modifier.padding(top = 36.dp) else Modifier)
+                    .then(if (p.heading && row.chapter > 0) Modifier.padding(top = 40.dp, bottom = 4.dp) else Modifier)
                     .onGloballyPositioned { coords ->
                         val bounds = Rect(coords.positionInRoot(), androidx.compose.ui.geometry.Size(coords.size.width.toFloat(), coords.size.height.toFloat()))
                         passageBounds[row.key] = bounds
@@ -476,6 +487,9 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
                 }
             }
             }
+        }
+        if (book.isArticle) item(key = "article-end") {
+            ArticleFooter(book, Modifier.widthIn(max = ReadingStyle.measure).fillMaxWidth(), onAskArticle, onExam)
         }
     }
     if (selectingAi) PassageOverlay(passageLayouts, rows, onAiPreview, onAiPicked, onAiCancel)

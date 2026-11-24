@@ -130,7 +130,7 @@ internal fun BookConstellation(books: List<ShelfBook>, progress: Map<String, Flo
                     drawCircle(Color(0xFFFFF7E5), (2.6f + pulse * .55f).dp.toPx(), center)
                     drawCircle(Color.White, 1.2.dp.toPx(), center)
                 }
-                Text(book.title, fontFamily = FontFamily.Serif, fontSize = 15.sp, lineHeight = 21.sp,
+                Text(book.title, fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif, fontSize = 15.sp, lineHeight = 21.sp,
                     color = Starlight, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(horizontal = 5.dp))
                 if (fraction > 0f) Text("已读 ${(fraction * 100).roundToInt()}%",

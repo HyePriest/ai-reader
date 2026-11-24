@@ -47,7 +47,7 @@ internal fun ExamSheet(book: Book, onDismiss: () -> Unit, onExplain: (String) ->
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(vertical = 10.dp)) {
                 items(questions, key = { it.number }) { q ->
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("${q.number}. ${q.stem.ifBlank { "第 ${q.number} 空" }}", fontFamily = FontFamily.Serif, fontSize = 16.sp, lineHeight = 23.sp,
+                        Text("${q.number}. ${q.stem.ifBlank { "第 ${q.number} 空" }}", fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif, fontSize = 16.sp, lineHeight = 23.sp,
                             fontWeight = FontWeight.Medium)
                         q.options.forEachIndexed { i, option ->
                             val letter = q.label(i)
@@ -59,7 +59,7 @@ internal fun ExamSheet(book: Book, onDismiss: () -> Unit, onExplain: (String) ->
                                 chosen = chosen + (q.number to letter); answers.choose(book.id, q.number, letter)
                             }.padding(vertical = 2.dp).testTag("option-${q.number}-$letter"), verticalAlignment = Alignment.CenterVertically) {
                                 RadioButton(selected = mine, onClick = null, enabled = !submitted || mine)
-                                Text("$letter. $option", color = tint, fontFamily = FontFamily.Serif, fontSize = 15.sp, lineHeight = 21.sp,
+                                Text("$letter. $option", color = tint, fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif, fontSize = 15.sp, lineHeight = 21.sp,
                                     fontWeight = if (correct) FontWeight.SemiBold else FontWeight.Normal, modifier = Modifier.padding(start = 6.dp))
                             }
                         }

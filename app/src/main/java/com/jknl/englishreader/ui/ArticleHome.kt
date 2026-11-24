@@ -36,7 +36,8 @@ import kotlinx.coroutines.withContext
 /** Home for short reading: paste, share or import, then pick an article from a card list. */
 @Composable
 internal fun ArticleHome(articles: List<ShelfBook>, store: LibraryStore, onRead: (ShelfBook) -> Unit, onOpenText: (String) -> Unit,
-    onImport: () -> Unit, onSettings: () -> Unit, onNotebook: () -> Unit, onDelete: (List<ShelfBook>) -> Unit) {
+    onImport: () -> Unit, onSettings: () -> Unit, onNotebook: () -> Unit, onDelete: (List<ShelfBook>) -> Unit,
+    titleStatus: String? = null, onRetryTitles: () -> Unit = {}) {
     var openIssue by rememberSaveable { mutableStateOf<String?>(null) }
     val groups = remember(articles) { articles.filter { it.collection.isNotBlank() }.groupBy { it.collection }.toList().sortedByDescending { it.first } }
     val exams = groups.filter { (_, list) -> list.first().sourceFormat == ExamPaper.FORMAT }
@@ -57,7 +58,7 @@ internal fun ArticleHome(articles: List<ShelfBook>, store: LibraryStore, onRead:
         item(key = "header") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("读一篇", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Serif)
+                    Text("读一篇", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif)
                     Text("粘贴、分享或导入，打开就读", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 TextButton(onClick = onNotebook, modifier = Modifier.testTag("article-vocabulary")) { Text("生词本") }
@@ -80,6 +81,14 @@ internal fun ArticleHome(articles: List<ShelfBook>, store: LibraryStore, onRead:
                     TextButton(onClick = onImport, modifier = Modifier.fillMaxWidth().testTag("import-article-file")) {
                         Text("导入文件 · 经济学人 EPUB、真题 md、TXT、Word、PDF", fontSize = 13.sp)
                     }
+                }
+            }
+        }
+        if (titleStatus != null && articles.any { it.titleZh.isBlank() && it.sourceFormat != ExamPaper.FORMAT }) item(key = "title-status") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(titleStatus, fontSize = 12.sp, lineHeight = 17.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                if (!titleStatus.startsWith("正在")) TextButton(onClick = if (titleStatus.contains("API Key")) onSettings else onRetryTitles) {
+                    Text(if (titleStatus.contains("API Key")) "去设置" else "重试")
                 }
             }
         }
@@ -111,7 +120,7 @@ private fun CollectionCard(name: String, list: List<ShelfBook>, store: LibrarySt
     Card(Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick).testTag("collection-$name"), shape = RoundedCornerShape(16.dp)) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(name, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Serif)
+                Text(name, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif)
                 val summary = if (exam) {
                     val total = ordered.sumOf { it.questionCount }
                     val done = remember(list) { ordered.sumOf { answers.chosen(it.id).size } }
@@ -129,7 +138,7 @@ private fun CollectionCard(name: String, list: List<ShelfBook>, store: LibrarySt
 }
 
 @Composable
-private fun IssueScreen(name: String, articles: List<ShelfBook>, store: LibraryStore, onBack: () -> Unit, onRead: (ShelfBook) -> Unit,
+internal fun IssueScreen(name: String, articles: List<ShelfBook>, store: LibraryStore, onBack: () -> Unit, onRead: (ShelfBook) -> Unit,
     onDelete: (List<ShelfBook>) -> Unit) {
     BackHandler(onBack = onBack)
     val exam = articles.firstOrNull()?.sourceFormat == ExamPaper.FORMAT
@@ -212,7 +221,7 @@ private fun FeaturedCard(article: ShelfBook, store: LibraryStore, onClick: () ->
 
 @Composable
 private fun ArticleTitles(article: ShelfBook, large: Boolean = false) {
-    Text(article.title, maxLines = 3, overflow = TextOverflow.Ellipsis, fontFamily = FontFamily.Serif, fontWeight = FontWeight.SemiBold,
+    Text(article.title, maxLines = 3, overflow = TextOverflow.Ellipsis, fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif, fontWeight = FontWeight.SemiBold,
         fontSize = if (large) 20.sp else 16.sp, lineHeight = if (large) 26.sp else 21.sp)
     if (article.titleZh.isNotBlank()) Text(article.titleZh, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = if (large) 15.sp else 13.sp,
         lineHeight = if (large) 21.sp else 18.sp, color = MaterialTheme.colorScheme.primary)

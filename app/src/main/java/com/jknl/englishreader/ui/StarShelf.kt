@@ -145,7 +145,7 @@ internal fun StarShelf(books: List<ShelfBook>, store: LibraryStore, loading: Boo
             Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).testTag("book-details-scroll").padding(horizontal = 28.dp).padding(top = 12.dp, bottom = 32.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 OrbitCover(book, covers, revision, orbitColors[0], Modifier.size(126.dp))
-                Text(book.title, fontFamily = FontFamily.Serif, fontSize = 24.sp, textAlign = TextAlign.Center)
+                Text(book.title, fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif, fontSize = 24.sp, textAlign = TextAlign.Center)
                 if (book.author.isNotBlank()) Text(book.author, fontSize = 13.sp, color = MutedStar)
                 val position = store.position(book)
                 val fraction = book.progress(position)
@@ -195,7 +195,7 @@ private fun OrbitCover(book: ShelfBook, covers: BookCovers, revision: Int, tint:
                 val words = book.title.trim().split(Regex("\\s+"))
                 val monogram = if (words.size > 1) words.take(2).mapNotNull { it.firstOrNull() }.joinToString("").uppercase()
                     else book.title.take(2).uppercase()
-                Text(monogram, fontFamily = FontFamily.Serif, fontSize = 30.sp, lineHeight = 34.sp, maxLines = 1,
+                Text(monogram, fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif, fontSize = 30.sp, lineHeight = 34.sp, maxLines = 1,
                     textAlign = TextAlign.Center, color = Starlight, modifier = Modifier.padding(vertical = 4.dp))
             }
         }

@@ -58,7 +58,7 @@ data class Book(val id: String, val title: String, val author: String, val chapt
     val countLabel: String get() = if (isChinese) "${chapters.sumOf { it.characterCount }.formatWords()} 字" else "${wordCount.formatWords()} 词"
 }
 data class ReadingPosition(val chapter: Int = 0, val paragraph: Int = 0, val character: Int = 0)
-data class ReaderSettings(val size: Float = 21f, val spacing: Float = 1.7f, val palette: String = "paper", val serif: Boolean = true)
+data class ReaderSettings(val size: Float = 18f, val spacing: Float = 1.6f, val palette: String = "paper", val serif: Boolean = true)
 data class Selection(val paragraph: Paragraph, val range: SourceRange, val word: String?, val alignment: Alignment?, val note: WordNote? = null,
     val chapterIndex: Int = 0, val wordStart: Int = range.start)
 

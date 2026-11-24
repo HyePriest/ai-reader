@@ -186,10 +186,14 @@ fun ReaderApp(incoming: android.content.Intent? = null, onIncomingHandled: () ->
     // Chinese titles for article lists: one batched request per new set of articles, when a key is configured.
     val titleTranslator = remember { TitleTranslator(context.applicationContext) }
     val titleAttempted = remember { mutableSetOf<String>() }
-    LaunchedEffect(books) {
+    var titleStatus by remember { mutableStateOf<String?>(null) }
+    var titleRetry by remember { mutableIntStateOf(0) }
+    LaunchedEffect(books, titleRetry) {
         val missing = books.filter { it.isArticle && it.sourceFormat != ExamPaper.FORMAT && it.titleZh.isBlank() && it.id !in titleAttempted }
-        if (missing.isEmpty() || !titleTranslator.available()) return@LaunchedEffect
+        if (missing.isEmpty()) { if (titleStatus?.startsWith("正在") == true) titleStatus = null; return@LaunchedEffect }
+        if (!titleTranslator.available()) { titleStatus = "在设置里填写 DeepSeek API Key 后，会自动生成中文标题。"; return@LaunchedEffect }
         titleAttempted += missing.map { it.id }
+        titleStatus = "正在生成 ${missing.size} 个中文标题…"
         // Not tied to this effect: a later list change must not cancel a request already paid for.
         scope.launch { try {
             val titles = titleTranslator.translate(missing.map { it.id to (it.title + if (it.subtitle.isNotBlank()) " —— ${it.subtitle}" else "") })
@@ -198,8 +202,13 @@ fun ReaderApp(incoming: android.content.Intent? = null, onIncomingHandled: () ->
             }
             val byId = updated.associate { it.id to ShelfBook.from(it) }
             books = books.map { byId[it.id] ?: it }
+            titleStatus = if (updated.size < missing.size) "有 ${missing.size - updated.size} 个中文标题没有生成。" else null
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-        catch (_: Exception) { /* Titles are optional; the English title still shows. */ } }
+        catch (e: Exception) {
+            // Titles are optional; the English title still shows. Allow a manual retry.
+            titleAttempted -= missing.map { it.id }.toSet()
+            titleStatus = "中文标题没有生成：${e.message ?: "请求失败"}"
+        } }
     }
     LaunchedEffect(incoming) {
         val intent = incoming ?: return@LaunchedEffect
@@ -258,7 +267,8 @@ fun ReaderApp(incoming: android.content.Intent? = null, onIncomingHandled: () ->
                         if (tab == "articles") shelfState.SaveableStateProvider("articles") {
                             ArticleHome(books.filter { it.isArticle }, store, onRead = { activeId = it.id; activeBook = store.cached(it.id) },
                                 onOpenText = ::openText, onImport = { articleImporter.launch(arrayOf("*/*")) }, onSettings = { settingsOpen = true },
-                                onNotebook = { notebookOpen = true }, onDelete = ::delete)
+                                onNotebook = { notebookOpen = true }, onDelete = ::delete,
+                                titleStatus = titleStatus, onRetryTitles = { titleStatus = null; titleRetry++ })
                         } else shelfState.SaveableStateProvider("shelf") {
                             StarShelf(books.filterNot { it.isArticle }, store, shelfLoading, notebookOpen,
                                 { activeId = it.id; activeBook = store.cached(it.id) }, { if (!shelfLoading) importInfo = true }, { settingsOpen = true }, { notebookOpen = true })
@@ -287,7 +297,7 @@ fun ReaderApp(incoming: android.content.Intent? = null, onIncomingHandled: () ->
                 }
             }
         }
-        if (settingsOpen) SettingsSheet(settings, { settings = it; store.saveSettings(it) }, { settingsOpen = false })
+        if (settingsOpen) SettingsSheet(settings, { settings = it; store.saveSettings(it) }, { settingsOpen = false; titleRetry++ })
         if (notebookOpen) WordNotebookDialog { notebookOpen = false }
         if (importGuide) ImportGuideDialog { importGuide = false; importInfo = true }
         if (importInfo) AlertDialog(onDismissRequest = { importInfo = false }, title = { Text("把一本书带进来") }, text = {
@@ -382,7 +392,7 @@ internal fun TranslationEditor(book: Book, chapterIndex: Int, initial: List<Sour
                         ParagraphPicker("止", to, chapter, Modifier.weight(1f)) { to = it; if (from > to) from = to; confirmReplace = false }
                     }
                     Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f), shape = RoundedCornerShape(12.dp)) {
-                        Text(english, fontFamily = FontFamily.Serif, fontSize = 16.sp, lineHeight = 24.sp,
+                        Text(english, fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif, fontSize = 16.sp, lineHeight = 24.sp,
                             modifier = Modifier.fillMaxWidth().heightIn(max = 170.dp).verticalScroll(rememberScrollState()).padding(14.dp))
                     }
                     Row(verticalAlignment = UiAlignment.CenterVertically) {
@@ -455,14 +465,14 @@ private fun SettingsSheet(settings: ReaderSettings, onChange: (ReaderSettings) -
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                FilterChip(selected = settings.serif, onClick = { onChange(settings.copy(serif = true)) }, label = { Text("Serif 衬线", fontFamily = FontFamily.Serif) })
+                FilterChip(selected = settings.serif, onClick = { onChange(settings.copy(serif = true)) }, label = { Text("Serif 衬线", fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif) })
                 FilterChip(selected = !settings.serif, onClick = { onChange(settings.copy(serif = false)) }, label = { Text("Sans 无衬线") })
             }
             Text("字号   ${settings.size.toInt()}", fontSize = 14.sp)
             Slider(value = settings.size, onValueChange = { onChange(settings.copy(size = it)) }, valueRange = 16f..30f, steps = 13)
             Text("行距   ${"%.1f".format(settings.spacing)}", fontSize = 14.sp)
             Slider(value = settings.spacing, onValueChange = { onChange(settings.copy(spacing = it)) }, valueRange = 1.3f..2.2f, steps = 8)
-            Text("ai reader · 给阅读留一点思考的空间。", fontFamily = if (settings.serif) FontFamily.Serif else FontFamily.SansSerif, fontSize = settings.size.sp, lineHeight = (settings.size * settings.spacing).sp)
+            Text("ai reader · 给阅读留一点思考的空间。", fontFamily = if (settings.serif) com.jknl.englishreader.ui.theme.ReadingSerif else com.jknl.englishreader.ui.theme.InterfaceSans, fontSize = settings.size.sp, lineHeight = (settings.size * settings.spacing).sp)
             Text("设置自动保存，应用于所有书籍。向下读时隐藏标题，回滑或轻点留白恢复。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             DeepSeekSettingsCard()
         }

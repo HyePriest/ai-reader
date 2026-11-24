@@ -105,3 +105,18 @@ class ExamTest {
         }
     }
 }
+
+class TitleTranslationTest {
+    @Test fun requestUsesJsonModeWithLowercaseJsonInPrompt() {
+        val body = org.json.JSONObject(TitleTranslation.body("deepseek-flash", listOf("Can Britannia rule the waves again?")))
+        assertEquals("json_object", body.getJSONObject("response_format").getString("type"))
+        assertTrue(body.getJSONArray("messages").getJSONObject(0).getString("content").contains("json"))
+    }
+    @Test fun parsesPlainAndFencedReplies() {
+        fun reply(content: String) = org.json.JSONObject().put("choices", org.json.JSONArray().put(org.json.JSONObject()
+            .put("message", org.json.JSONObject().put("content", content)))).toString()
+        assertEquals(mapOf(0 to "英国能否再次称霸海洋？", 1 to "测试"), TitleTranslation.parse(reply("{\"1\":\"英国能否再次称霸海洋？\",\"2\":\"测试\"}"), 2))
+        assertEquals(mapOf(0 to "甲"), TitleTranslation.parse(reply("```json\n{\"1\":\"甲\"}\n```"), 1))
+        assertThrows(IllegalArgumentException::class.java) { TitleTranslation.parse(reply("抱歉"), 1) }
+    }
+}
