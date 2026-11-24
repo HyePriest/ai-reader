@@ -131,4 +131,74 @@ class ScreenshotTest {
         }
         shoot("exam-reader")
     }
+
+    private fun examPart(title: String): Book {
+        val dir = System.getenv("EXAM_DIR")
+        assumeTrue(out != null && dir != null)
+        return ExamPaper.read(File(dir!!, "2024-eng1.md").readText()).first { it.title == title }
+    }
+
+    private fun renderReader(book: Book, name: String) {
+        val store = LibraryStore(context)
+        store.save(book)
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            EnglishReaderTheme("paper") { Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                Reader(book, store, ReaderSettings(), onBack = {}, onSettings = {}, onUpdate = {}, initialExamOpen = true)
+            } }
+        }
+        shoot(name)
+    }
+
+    @Test fun clozePanel() {
+        val cloze = examPart("完形填空")
+        val answers = ExamAnswers(context)
+        "BCBAB".forEachIndexed { i, c -> answers.choose(cloze.id, i + 1, c) }
+        renderReader(cloze, "exam-cloze")
+    }
+
+    @Test fun clozeSubmitted() {
+        val cloze = examPart("完形填空")
+        val answers = ExamAnswers(context)
+        answers.setKey(cloze.collection, AnswerKey.parse("1-5 DCBAB"))
+        "BCBAB".forEachIndexed { i, c -> answers.choose(cloze.id, i + 1, c) }
+        answers.setSubmitted(cloze.id, true)
+        renderReader(cloze, "exam-cloze-submitted")
+    }
+
+    @Test fun readingPanel() {
+        val text = examPart("阅读 Text 1")
+        ExamAnswers(context).choose(text.id, 21, 'D')
+        renderReader(text, "exam-reading")
+    }
+
+    @Test fun aiConversation() {
+        assumeTrue(out != null)
+        val book = Articles.fromText("Title here\n\nFirst paragraph says one thing. It goes on.\n\nThe last paragraph concludes.")
+        val q = ReadingQuestions.wholeArticle(book)
+        val answer = """
+            ## 全文大意
+            作者认为**廉价技术**比复杂技术更能改变世界，钉子就是一个例子。
+
+            ### 逐段要点
+            1. 罗马人埋下一百万颗钉子：说明铁很**珍贵**。
+            2. 弗吉尼亚人烧房取钉：钉子*稀缺*且昂贵。
+            - 关键句：`it's the cheap technologies that change the world`
+
+            | 段落 | 作用 |
+            |---|---|
+            | 1–2 | 引出话题 |
+            | 3–4 | 举例论证 |
+
+            > 注意：第 5 段是作者的核心观点。
+        """.trimIndent()
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            EnglishReaderTheme("paper") { Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                ReadingQuestionContent(q, listOf(ReadingExchange("全文大意是什么？", answer)), pending = "作者的态度是什么？", error = null,
+                    question = "", onQuestion = {}, onSend = {}, onStop = {}, onClear = {}, onReselect = {}, onAppend = {}, onClose = {})
+            } }
+        }
+        shoot("ai-conversation")
+    }
 }

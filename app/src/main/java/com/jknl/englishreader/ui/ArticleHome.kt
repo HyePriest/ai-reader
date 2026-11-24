@@ -159,7 +159,14 @@ internal fun IssueScreen(name: String, articles: List<ShelfBook>, store: Library
                     GlyphButton("back", "返回", onBack)
                     Text(name, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (exam) TextButton(onClick = { keyOpen = true }, modifier = Modifier.testTag("answer-key")) { Text("答案") }
-                    TextButton(onClick = { confirmDelete = name to articles }) { Text(if (exam) "删除" else "删除本期") }
+                    // Rarely used: kept behind the overflow menu.
+                    var menu by remember { mutableStateOf(false) }
+                    Box {
+                        GlyphButton("more", "更多", { menu = true })
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(text = { Text(if (exam) "删除这份真题" else "删除本期") }, onClick = { menu = false; confirmDelete = name to articles })
+                        }
+                    }
                 }
                 if (!exam) Row(Modifier.padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(selected = !examOnly, onClick = { examOnly = false }, label = { Text("全部 ${articles.size}") })

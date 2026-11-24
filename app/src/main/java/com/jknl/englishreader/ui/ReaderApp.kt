@@ -497,6 +497,7 @@ private fun Glyph(name: String, modifier: Modifier = Modifier) {
         fun line(x1: Float, y1: Float, x2: Float, y2: Float) = drawLine(color, Offset(x1 * u, y1 * u), Offset(x2 * u, y2 * u), 1.65f * u, cap = androidx.compose.ui.graphics.StrokeCap.Round)
         when (name) {
             "plus" -> { line(5f, 12f, 19f, 12f); line(12f, 5f, 12f, 19f) }
+            "more" -> for (y in listOf(5f, 12f, 19f)) drawCircle(color, 1.7f * u, Offset(12f * u, y * u))
             "close" -> { line(6f, 6f, 18f, 18f); line(18f, 6f, 6f, 18f) }
             "back" -> { line(15f, 5f, 8f, 12f); line(8f, 12f, 15f, 19f) }
             "forward" -> { line(8f, 5f, 15f, 12f); line(15f, 12f, 8f, 19f) }

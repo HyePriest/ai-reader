@@ -34,6 +34,7 @@ import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -59,7 +60,7 @@ internal data class ReadingRow(val chapter: Int, val paragraphIndex: Int, val pa
 
 @Composable
 internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, onBack: () -> Unit,
-    onSettings: () -> Unit, trackingEnabled: Boolean = true, onUpdate: suspend (Book) -> Unit) {
+    onSettings: () -> Unit, trackingEnabled: Boolean = true, onUpdate: suspend (Book) -> Unit, initialExamOpen: Boolean = false) {
     val context = LocalContext.current
     val repository = remember { WordRepository(context.applicationContext) }
     val notebook = remember { WordNotebook(context.applicationContext) }
@@ -97,7 +98,8 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
     var aiQuestion by remember { mutableStateOf<ReadingQuestion?>(null) }
     var aiError by remember { mutableStateOf<String?>(null) }
     var aiInitial by remember { mutableStateOf<String?>(null) }
-    var examOpen by rememberSaveable { mutableStateOf(false) }
+    var examOpen by rememberSaveable { mutableStateOf(initialExamOpen) }
+    val exam = remember(book.id) { if (book.questions.isNotEmpty()) ExamState(book, ExamAnswers(context.applicationContext)) else null }
     val chats = remember { ArticleChats(context.applicationContext) }
     fun askArticle(question: ReadingQuestion, initial: String? = null) { aiInitial = initial; aiRanges = question.passages; aiQuestion = question }
     var annotation by remember { mutableStateOf<Pair<Paragraph, Int>?>(null) }
@@ -147,6 +149,7 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
     // Hidden system bars must not reserve empty strips. Transient bars overlay the page.
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wordHeight = minOf(360.dp, maxHeight * .48f)
+        val screenHeight = maxHeight
         val density = LocalDensity.current
         val textMeasurer = rememberTextMeasurer()
         val translation = selection?.alignment?.chinese.orEmpty()
@@ -178,7 +181,8 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
                     } catch (e: Exception) { aiError = e.message }
                 }, onAiCancel = { selectingAi = false; aiPreview = emptyList(); aiRanges = emptyList() },
                 searchHit = searchHit, searchJump = searchJump, onSearchJumpDone = { searchJump = null },
-                onAskArticle = { prompt -> closePanel(); askArticle(ReadingQuestions.wholeArticle(book), prompt) }, onExam = { closePanel(); examOpen = true })
+                onAskArticle = { prompt -> closePanel(); askArticle(ReadingQuestions.wholeArticle(book), prompt) }, onExam = { closePanel(); examOpen = true },
+                exam = exam, examActive = examOpen, onClozeBlank = { n -> closePanel(); exam?.goTo(n); examOpen = true })
             // Overlay instead of inserting/removing a row above the list: no text jumps on title changes.
             if (chrome && !selectingAi) Surface(modifier = Modifier.pointerInput(Unit) { detectTapGestures(onTap = {}) },
                 color = MaterialTheme.colorScheme.background.copy(alpha = .97f)) {
@@ -194,7 +198,7 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
                         Text("全书 ${book.countLabel} · 本章 ${book.chapters[chapterIndex].countLabel}", fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     val pill = PaddingValues(horizontal = 12.dp)
-                    if (book.questions.isNotEmpty()) FilledTonalButton(onClick = { closePanel(); examOpen = true }, contentPadding = pill,
+                    if (book.questions.isNotEmpty()) FilledTonalButton(onClick = { closePanel(); examOpen = !examOpen }, contentPadding = pill,
                         modifier = Modifier.height(34.dp).padding(end = 6.dp).testTag("open-exam")) { Text("做题", fontSize = 13.sp) }
                     if (book.isArticle) FilledTonalButton(onClick = { closePanel(); askArticle(ReadingQuestions.wholeArticle(book)) }, contentPadding = pill,
                         modifier = Modifier.height(34.dp).testTag("ask-article")) { Text("问 AI", fontSize = 13.sp) }
@@ -233,10 +237,13 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
                     runCatching { ReadingQuestions.selection(book, listOf(PassageRange(s.chapterIndex, paragraph, s.range.start, s.range.end))) }
                         .onSuccess { closePanel(); askArticle(it, initial) }.onFailure { aiError = it.message }
                 }) }
+            if (examOpen && exam != null && selection == null) ExamPanel(exam,
+                if (exam.isCloze) minOf(360.dp, screenHeight * .46f) else minOf(screenHeight * .44f, 420.dp), screenHeight * .78f,
+                onExplain = { prompt -> askArticle(ReadingQuestions.wholeArticle(book), prompt) }, onClose = { examOpen = false })
         }
     }
     annotation?.let { (paragraph, index) -> AnnotationDialog(paragraph, index, onDismiss = { annotation = null }) }
-    if (examOpen) ExamSheet(book, onDismiss = { examOpen = false }, onExplain = { prompt -> examOpen = false; askArticle(ReadingQuestions.wholeArticle(book), prompt) })
+
     aiQuestion?.let { question -> ReadingQuestionSheet(question,
         initialHistory = remember(question) { if (question.wholeArticle) chats.read(book.id) else emptyList() },
         onHistory = { history -> if (question.wholeArticle) scope.launch(Dispatchers.IO) { runCatching { if (history.isEmpty()) chats.clear(book.id) else chats.write(book.id, history) } } },
@@ -290,7 +297,8 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
     selectingAi: Boolean, aiRanges: List<PassageRange>, onAiPreview: (List<PassageRange>) -> Unit,
     onAiPicked: (List<PassageRange>) -> Unit, onAiCancel: () -> Unit,
     searchHit: PassageRange?, searchJump: ReadingPosition?, onSearchJumpDone: () -> Unit,
-    onAskArticle: (String?) -> Unit = {}, onExam: () -> Unit = {}) {
+    onAskArticle: (String?) -> Unit = {}, onExam: () -> Unit = {},
+    exam: ExamState? = null, examActive: Boolean = false, onClozeBlank: (Int) -> Unit = {}) {
     val passageLayouts = remember { mutableStateMapOf<String, PassageLayout>() }
     val passageBounds = remember { mutableStateMapOf<String, Rect>() }
     val layouts = remember { mutableStateMapOf<String, TextLayoutResult>() }
@@ -371,6 +379,22 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
                 if (!it.third) persist()
             }
     }
+    // Keep the current cloze blank on screen while answering.
+    LaunchedEffect(exam?.current, examActive) {
+        val state = exam ?: return@LaunchedEffect
+        if (!examActive || !state.isCloze) return@LaunchedEffect
+        val marker = "(${state.question.number})__"
+        val index = rows.indexOfFirst { it.paragraph.text.contains(marker) }
+        if (index < 0) return@LaunchedEffect
+        val visible = list.layoutInfo.visibleItemsInfo
+        val item = visible.firstOrNull { it.index == index }
+        val viewport = list.layoutInfo.viewportEndOffset
+        val layout = layouts[rows[index].key]
+        val lineTop = layout?.let { l -> l.getLineTop(l.getLineForOffset(rows[index].paragraph.text.indexOf(marker))).toInt() } ?: 0
+        if (item == null || item.offset + lineTop < toolbarInset || item.offset + lineTop > viewport - 80) {
+            list.animateScrollToItem(index, (lineTop - toolbarInset - 40).coerceAtLeast(0))
+        }
+    }
     // Track only real drags, not layout/bring-into-view scrolls caused by opening a panel.
     var dragging by remember { mutableStateOf(false) }
     var dragTravel by remember { mutableFloatStateOf(0f) }
@@ -429,7 +453,19 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
                     addStyle(SpanStyle(background = MaterialTheme.colorScheme.tertiaryContainer), it.start, it.end)
                 }
                 highlight.forEach { addStyle(SpanStyle(background = MaterialTheme.colorScheme.primaryContainer), it.start, it.end) }
+                // Cloze blanks are drawn as inline boxes over the underscores, so text offsets stay unchanged.
+                if (exam?.isCloze == true) ClozeText.blank.findAll(p.text).forEach { m ->
+                    val g = m.groups[2]!!.range
+                    addStringAnnotation("androidx.compose.foundation.text.inlineContent", "blank-${m.groupValues[1]}", g.first, g.last + 1)
+                }
             }.toAnnotatedString()
+            val blanks = if (exam?.isCloze == true) ClozeText.blank.findAll(p.text).associate { m ->
+                val n = m.groupValues[1].toInt()
+                "blank-$n" to androidx.compose.foundation.text.InlineTextContent(androidx.compose.ui.text.Placeholder(ClozeText.width(exam.word(n)).em, 1.4.em,
+                    androidx.compose.ui.text.PlaceholderVerticalAlign.Center)) {
+                    ClozeBlank(exam, n, settings.size, examActive && exam.question.number == n) { onClozeBlank(n) }
+                }
+            } else emptyMap()
             val selectAt: (Int, Boolean) -> Unit = { offset, longPress ->
                 val sentence = TextLocator.readingUnitAt(p, offset)
                 val word = TextLocator.wordAt(p.text, offset) ?: TextLocator.nearestWord(p.text, offset, sentence.first, sentence.last + 1)
@@ -444,7 +480,7 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
             DisposableEffect(row.key) { onDispose { layouts.remove(row.key); passageLayouts.remove(row.key); passageBounds.remove(row.key) } }
             val style = ReadingStyle.of(book, p, settings)
             Column(Modifier.widthIn(max = ReadingStyle.measure).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(annotated, fontFamily = style.family, fontSize = style.size.sp, lineHeight = style.line.sp, fontWeight = style.weight,
+            Text(annotated, inlineContent = blanks, fontFamily = style.family, fontSize = style.size.sp, lineHeight = style.line.sp, fontWeight = style.weight,
                 style = LocalTextStyle.current.merge(TextStyle(hyphens = androidx.compose.ui.text.style.Hyphens.Auto,
                     lineBreak = androidx.compose.ui.text.style.LineBreak.Paragraph, color = MaterialTheme.colorScheme.onBackground)),
                 onTextLayout = { layout -> layouts[row.key] = layout; passageBounds[row.key]?.let { bounds -> passageLayouts[row.key] = PassageLayout(row, bounds, layout) } }, modifier = Modifier.fillMaxWidth().testTag("paragraph-${row.chapter}-${row.paragraphIndex}")
@@ -468,6 +504,7 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
                             val glyph = listOf(caret, caret - 1).firstOrNull { at -> at in p.text.indices &&
                                 layout.getBoundingBox(at).let { box -> point.x >= box.left && point.x < box.right } }
                             val offset = (glyph ?: caret).coerceIn(layout.getLineStart(line), (layout.getLineEnd(line, visibleEnd = true) - 1).coerceAtLeast(layout.getLineStart(line))).coerceIn(0, p.text.lastIndex)
+                            if (exam?.isCloze == true) ClozeText.blank.findAll(p.text).firstOrNull { offset in it.range }?.let { onClozeBlank(it.groupValues[1].toInt()); return }
                             val noteIndex = p.annotations.indexOfFirst { offset >= it.start && offset < it.end }
                             if (!long && noteIndex >= 0 && !selectingAi) onAnnotation(p, noteIndex)
                             else latestSelect(offset, long)
