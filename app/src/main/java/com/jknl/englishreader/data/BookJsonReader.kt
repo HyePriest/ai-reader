@@ -10,6 +10,7 @@ internal object BookJsonReader {
         var id: String? = null; var title: String? = null; var author: String? = null
         var importedAt: Long? = null; var chapters: List<Chapter>? = null
         var sourceFormat = ""
+        var collection = ""; var section = ""; var subtitle = ""; var source = ""
         var contents = emptyList<ContentsEntry>()
         r.fields { name -> when (name) {
             "schema" -> schema = r.nextInt()
@@ -18,6 +19,10 @@ internal object BookJsonReader {
             "author" -> author = r.nextString()
             "importedAt" -> importedAt = r.nextLong()
             "sourceFormat" -> sourceFormat = r.nextString()
+            "collection" -> collection = r.nextString()
+            "section" -> section = r.nextString()
+            "subtitle" -> subtitle = r.nextString()
+            "source" -> source = r.nextString()
             "contents" -> contents = r.items {
                 var label = ""; var chapter = 0; var paragraph = 0; var character = 0; var depth = 0
                 r.fields { when (it) {
@@ -32,7 +37,8 @@ internal object BookJsonReader {
         } }
         require(schema == 1) { "这本书的数据版本暂不支持，请保留原文件" }
         Book(requireNotNull(id), requireNotNull(title), requireNotNull(author),
-            requireNotNull(chapters).also { require(it.isNotEmpty()) }, requireNotNull(importedAt), sourceFormat, contents)
+            requireNotNull(chapters).also { require(it.isNotEmpty()) }, requireNotNull(importedAt), sourceFormat, contents,
+            collection, section, subtitle, source)
     }
 
     private fun chapter(r: JsonReader): Chapter {

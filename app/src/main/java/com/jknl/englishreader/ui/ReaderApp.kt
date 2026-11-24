@@ -67,7 +67,7 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 
 @Composable
-fun ReaderApp() {
+fun ReaderApp(incoming: android.content.Intent? = null, onIncomingHandled: () -> Unit = {}) {
     val context = LocalContext.current
     val store = remember { LibraryStore(context.applicationContext) }
     val scope = rememberCoroutineScope()
@@ -86,11 +86,95 @@ fun ReaderApp() {
     var pendingBook by remember { mutableStateOf<Book?>(null) }
     var annotationUpdate by remember { mutableStateOf<Pair<Book, Book>?>(null) }
     var notebookOpen by rememberSaveable { mutableStateOf(false) }
+    var tab by rememberSaveable { mutableStateOf("articles") }
+    val lightPalette = settings.palette !in setOf("night", "ink", "black")
     SideEffect {
         val window = (context as? Activity)?.window
         if (window != null) WindowCompat.getInsetsController(window, window.decorView).apply {
-            isAppearanceLightStatusBars = activeBook != null && settings.palette !in setOf("night", "ink")
-            isAppearanceLightNavigationBars = activeBook != null && settings.palette !in setOf("night", "ink")
+            isAppearanceLightStatusBars = (activeBook != null || tab == "articles") && lightPalette
+            isAppearanceLightNavigationBars = (activeBook != null || tab == "articles") && lightPalette
+        }
+    }
+    fun openSaved(book: Book) { activeBook = book; activeId = book.id }
+    fun addToList(added: List<Book>) { if (added.isNotEmpty()) books = added.map { ShelfBook.from(it) } + books.filter { b -> added.none { it.id == b.id } } }
+    /** Pasted or shared text, or a single link: becomes an article and opens immediately. */
+    fun openText(raw: String) {
+        scope.launch {
+            busy = if (Articles.isLinkOnly(raw)) "正在打开网页并提取正文…" else "正在整理文章…"
+            try {
+                val book = withContext(Dispatchers.IO) {
+                    val url = Articles.firstUrl(raw)
+                    val article = if (url != null && Articles.isLinkOnly(raw)) {
+                        val page = org.jsoup.Jsoup.connect(url).userAgent("Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Mobile")
+                            .timeout(20_000).maxBodySize(8 * 1024 * 1024).followRedirects(true).get()
+                        Articles.fromHtml(page.outerHtml(), url)
+                    } else Articles.fromText(raw)
+                    if (store.exists(article.id)) store.open(article.id) else article.also { store.save(it) }
+                }
+                addToList(listOf(book)); tab = "articles"; openSaved(book)
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: java.io.IOException) { error = "网页没有打开：${e.message ?: "网络错误"}。可以在浏览器里复制正文，再粘贴进来。" }
+            catch (e: Exception) { error = e.message ?: "这段文字没能打开" }
+            finally { busy = "" }
+        }
+    }
+    /** Files: an Economist issue splits into articles; short documents from the article tab open as an article. */
+    fun importUri(uri: android.net.Uri, asArticle: Boolean) {
+        scope.launch {
+            busy = "正在整理…"
+            try {
+                when (val result = withContext(Dispatchers.IO) { store.importAny(uri) }) {
+                    is ImportResult.Issue -> {
+                        val added = withContext(Dispatchers.IO) { store.saveNew(result.articles) }
+                        addToList(added); tab = "articles"
+                        val name = result.articles.first().collection
+                        notice = "已导入 $name：共 ${result.articles.size} 篇" + if (added.size < result.articles.size) "（${result.articles.size - added.size} 篇已在，进度保留）" else ""
+                    }
+                    is ImportResult.Single -> {
+                        val book = result.book
+                        if (asArticle && book.wordCount in 1..15_000) {
+                            val article = Articles.fromBook(book)
+                            val opened = withContext(Dispatchers.IO) {
+                                if (book.sourceFormat == "pdf" && books.none { it.id == book.id }) runCatching { store.delete(book.id) }
+                                if (store.exists(article.id)) store.open(article.id) else article.also { store.save(it) }
+                            }
+                            addToList(listOf(opened)); tab = "articles"; openSaved(opened)
+                        } else if (books.any { it.id == book.id }) {
+                            val before = withContext(Dispatchers.IO) { store.open(book.id) }
+                            val after = BookAnnotations.supplement(before, book)
+                            if (before == after) notice = "这本书已经在书架上，已有译文、注释和进度已保留。"
+                            else annotationUpdate = before to after
+                        } else {
+                            if (asArticle) notice = "这个文件超过 1.5 万词，已按书籍导入。"
+                            tab = "shelf"; pendingBook = book
+                        }
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { error = "导入失败：${e.message ?: "无法读取文件"}" }
+            finally { busy = "" }
+        }
+    }
+    fun delete(list: List<ShelfBook>) {
+        scope.launch {
+            try { withContext(Dispatchers.IO) { list.forEach { store.delete(it.id) } } }
+            catch (e: Exception) { error = "删除没有完成：${e.message}" }
+            val ids = list.map { it.id }.toSet()
+            books = books.filterNot { it.id in ids }
+        }
+    }
+    LaunchedEffect(incoming) {
+        val intent = incoming ?: return@LaunchedEffect
+        onIncomingHandled()
+        @Suppress("DEPRECATION")
+        val stream = intent.getParcelableExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)
+        val text = intent.getCharSequenceExtra(android.content.Intent.EXTRA_PROCESS_TEXT)?.toString()
+            ?: intent.getCharSequenceExtra(android.content.Intent.EXTRA_TEXT)?.toString()
+        activeId = null; activeBook = null
+        when {
+            stream != null -> importUri(stream, asArticle = true)
+            !text.isNullOrBlank() -> openText(text)
+            intent.action == android.content.Intent.ACTION_VIEW && intent.data != null -> importUri(intent.data!!, asArticle = true)
         }
     }
 
@@ -122,30 +206,32 @@ fun ReaderApp() {
         finally { busy = "" }
     }
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) scope.launch {
-            busy = "正在整理书籍与中英文对应…"
-            try {
-                val book = withContext(Dispatchers.IO) { store.import(uri) }
-                if (books.any { it.id == book.id }) {
-                    val before = withContext(Dispatchers.IO) { store.open(book.id) }
-                    val after = BookAnnotations.supplement(before, book)
-                    if (before == after) notice = "这本书已经在书架上，已有译文、注释和进度已保留。"
-                    else annotationUpdate = before to after
-                }
-                else {
-                    pendingBook = book
-                }
-            } catch (e: Exception) { error = "导入失败：${e.message ?: "无法读取文件"}" }
-            finally { busy = "" }
-        }
+        if (uri != null) importUri(uri, asArticle = false)
     }
-    EnglishReaderTheme(if (activeBook == null) "stars" else settings.palette) {
+    val articleImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) importUri(uri, asArticle = true)
+    }
+    EnglishReaderTheme(if (activeBook == null && tab == "shelf") "stars" else settings.palette) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             val active = activeBook
             Box(Modifier.fillMaxSize()) {
-                if (active == null) shelfState.SaveableStateProvider("shelf") {
-                    StarShelf(books, store, shelfLoading, notebookOpen,
-                        { activeId = it.id; activeBook = store.cached(it.id) }, { if (!shelfLoading) importInfo = true }, { settingsOpen = true }, { notebookOpen = true })
+                if (active == null) Column(Modifier.fillMaxSize()) {
+                    Box(Modifier.weight(1f)) {
+                        if (tab == "articles") shelfState.SaveableStateProvider("articles") {
+                            ArticleHome(books.filter { it.isArticle }, store, onRead = { activeId = it.id; activeBook = store.cached(it.id) },
+                                onOpenText = ::openText, onImport = { articleImporter.launch(arrayOf("*/*")) }, onSettings = { settingsOpen = true },
+                                onNotebook = { notebookOpen = true }, onDelete = ::delete)
+                        } else shelfState.SaveableStateProvider("shelf") {
+                            StarShelf(books.filterNot { it.isArticle }, store, shelfLoading, notebookOpen,
+                                { activeId = it.id; activeBook = store.cached(it.id) }, { if (!shelfLoading) importInfo = true }, { settingsOpen = true }, { notebookOpen = true })
+                        }
+                    }
+                    NavigationBar(Modifier.testTag("home-tabs")) {
+                        NavigationBarItem(selected = tab == "articles", onClick = { tab = "articles" }, icon = { Text("文", fontSize = 18.sp) }, label = { Text("文章") },
+                            modifier = Modifier.testTag("tab-articles"))
+                        NavigationBarItem(selected = tab == "shelf", onClick = { tab = "shelf" }, icon = { Text("书", fontSize = 18.sp) }, label = { Text("书架") },
+                            modifier = Modifier.testTag("tab-shelf"))
+                    }
                 }
                 else key(active.id) {
                     Reader(active, store, settings, onBack = { activeId = null; activeBook = null }, onSettings = { settingsOpen = true }, trackingEnabled = !settingsOpen,

@@ -1,6 +1,8 @@
 package com.jknl.englishreader
 
+import android.content.Intent
 import android.os.Bundle
+import androidx.compose.runtime.mutableStateOf
 import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
@@ -11,6 +13,12 @@ import com.jknl.englishreader.ui.ReaderApp
 
 class MainActivity : ComponentActivity() {
     var readingAiTrigger: (() -> Unit)? = null
+    /** Text or a file shared into the app, waiting for the UI to open it. */
+    val incoming = mutableStateOf<Intent?>(null)
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.action != Intent.ACTION_MAIN) incoming.value = intent
+    }
     private val keyHandler = Handler(Looper.getMainLooper())
     private var volumeHeld = false
     private val wakeReadingAi = Runnable {
@@ -41,6 +49,7 @@ class MainActivity : ComponentActivity() {
                 layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             }
         }
-        setContent { ReaderApp() }
+        if (savedInstanceState == null && intent?.action != Intent.ACTION_MAIN) incoming.value = intent
+        setContent { ReaderApp(incoming.value, onIncomingHandled = { incoming.value = null }) }
     }
 }

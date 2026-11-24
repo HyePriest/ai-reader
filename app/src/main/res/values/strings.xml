@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">ai reader</string>
+    <string name="share_label">用 ai reader 阅读</string>
+    <string name="process_text_label">用 ai reader 阅读</string>
 </resources>

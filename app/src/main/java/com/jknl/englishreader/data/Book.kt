@@ -45,7 +45,10 @@ data class Chapter(val id: String, val title: String, val paragraphs: List<Parag
 data class ContentsEntry(val title: String, val chapter: Int, val paragraph: Int = 0, val character: Int = 0, val depth: Int = 0)
 
 data class Book(val id: String, val title: String, val author: String, val chapters: List<Chapter>, val importedAt: Long,
-    val sourceFormat: String = "", val contents: List<ContentsEntry> = emptyList()) {
+    val sourceFormat: String = "", val contents: List<ContentsEntry> = emptyList(),
+    /** Article metadata: an issue name, its section, the standfirst and where the text came from. */
+    val collection: String = "", val section: String = "", val subtitle: String = "", val source: String = "") {
+    val isArticle: Boolean get() = sourceFormat in Articles.formats
     val wordCount: Int by lazy { chapters.sumOf { it.wordCount } }
     val isChinese: Boolean by lazy { chapters.filter { c -> c.paragraphs.any { !it.heading } }.let { body -> body.isNotEmpty() && body.count { it.isChinese } > body.size / 2 } }
     val countLabel: String get() = if (isChinese) "${chapters.sumOf { it.characterCount }.formatWords()} 字" else "${wordCount.formatWords()} 词"
