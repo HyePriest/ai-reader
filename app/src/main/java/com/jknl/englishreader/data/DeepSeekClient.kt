@@ -68,14 +68,17 @@ fun interface WordTransport { suspend fun complete(key: String, body: String): S
 
 object DeepSeekTransport : WordTransport {
     private val workers = Executors.newCachedThreadPool()
-    override suspend fun complete(key: String, body: String): String = suspendCancellableCoroutine { continuation ->
+    override suspend fun complete(key: String, body: String): String = request(key, body, 60_000, 256 * 1024)
+    /** Web search with thinking can run many server-side steps; allow minutes and a larger reply. */
+    val slow = WordTransport { key, body -> request(key, body, 240_000, 2 * 1024 * 1024) }
+    private suspend fun request(key: String, body: String, readTimeout: Int, limit: Int): String = suspendCancellableCoroutine { continuation ->
         val connection = URL("https://api.deepseek.com/chat/completions").openConnection() as HttpURLConnection
         continuation.invokeOnCancellation { connection.disconnect() }
         workers.execute {
             try {
                 if (!continuation.isActive) return@execute
                 connection.apply {
-                    requestMethod = "POST"; connectTimeout = 15000; readTimeout = 60000
+                    requestMethod = "POST"; connectTimeout = 15000; this.readTimeout = readTimeout
                     instanceFollowRedirects = false; doOutput = true
                     setRequestProperty("Authorization", "Bearer $key")
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
@@ -84,7 +87,7 @@ object DeepSeekTransport : WordTransport {
                 connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
                 val status = connection.responseCode
                 require(status in 200..299) { WordPrompt.httpError(status) }
-                val result = connection.inputStream.use { it.readLimited(256 * 1024).toString(Charsets.UTF_8) }
+                val result = connection.inputStream.use { it.readLimited(limit).toString(Charsets.UTF_8) }
                 if (continuation.isActive) continuation.resume(result)
             } catch (e: Exception) {
                 val safe = when (e) {

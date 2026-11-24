@@ -120,3 +120,42 @@ class TitleTranslationTest {
         assertThrows(IllegalArgumentException::class.java) { TitleTranslation.parse(reply("抱歉"), 1) }
     }
 }
+
+class AnswerLookupFormatTest {
+    private fun reply(message: org.json.JSONObject) = org.json.JSONObject().put("choices", org.json.JSONArray().put(org.json.JSONObject().put("message", message))).toString()
+    private val q = ExamQuestion(21, "The Romans buried the nails probably for the sake of ____", listOf("saving", "keeping", "letting", "hiding"))
+
+    @Test fun searchRequestUsesDeepSearchWithoutJsonMode() {
+        val body = org.json.JSONObject(AnswerLookupFormat.searchBody("2024 考研英语（一）", listOf(q)))
+        assertEquals("deepseek-flash", body.getString("model"))
+        assertEquals("deepseek_web_search", body.getJSONArray("tools").getJSONObject(0).getString("type"))
+        assertEquals("enabled", body.getJSONObject("thinking").getString("type"))
+        assertFalse(body.has("response_format"))
+        assertTrue(body.toString().contains("D. hiding"))
+    }
+
+    @Test fun parsesFoundKeyWithSources() {
+        val message = org.json.JSONObject().put("content", "来源：中国教育考试网，与题目一致。\nANSWER_KEY: 21-25 DDABA 26-30 ABDAB")
+            .put("annotations", org.json.JSONArray().put(org.json.JSONObject().put("type", "url_citation")
+                .put("url_citation", org.json.JSONObject().put("url", "https://example.edu/key").put("title", "2024 答案"))))
+        val result = AnswerLookupFormat.parseSearch(reply(message))!!
+        assertTrue(result.searched)
+        assertEquals('D', result.key[21]); assertEquals('B', result.key[30]); assertEquals(10, result.key.size)
+        assertEquals(listOf(AnswerSource("2024 答案", "https://example.edu/key")), result.sources)
+    }
+
+    @Test fun notFoundOrSourcelessAnswersAreRejected() {
+        assertNull(AnswerLookupFormat.parseSearch(reply(org.json.JSONObject().put("content", "没找到\nANSWER_KEY: NOT_FOUND"))))
+        // A key with no web source might be recalled from memory: not trusted as "found".
+        assertNull(AnswerLookupFormat.parseSearch(reply(org.json.JSONObject().put("content", "ANSWER_KEY: 21-25 DDABA"))))
+    }
+
+    @Test fun solveParsesAnswersAndUncertainty() {
+        val body = org.json.JSONObject(AnswerLookupFormat.solveBody("deepseek-flash", Articles.fromText("Title\n\nBody text.").copy(questions = listOf(q))))
+        assertEquals("json_object", body.getJSONObject("response_format").getString("type"))
+        val result = AnswerLookupFormat.parseSolve(reply(org.json.JSONObject().put("content", "{\"answers\":{\"21\":\"d\",\"99\":\"A\"},\"uncertain\":[21]}")), setOf(21))
+        assertEquals(mapOf(21 to 'D'), result.key)
+        assertEquals(setOf(21), result.uncertain)
+        assertFalse(result.searched)
+    }
+}

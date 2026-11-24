@@ -201,4 +201,12 @@ class ScreenshotTest {
         }
         shoot("ai-conversation")
     }
+
+    @Test fun readingNoKey() {
+        val text = examPart("阅读 Text 2")
+        val answers = ExamAnswers(context)
+        "ABDAB".forEachIndexed { i, c -> answers.choose(text.id, 26 + i, c) }
+        answers.setSubmitted(text.id, true)
+        renderReader(text, "exam-no-key")
+    }
 }
