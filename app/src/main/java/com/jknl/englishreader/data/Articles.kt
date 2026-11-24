@@ -12,7 +12,7 @@ import java.util.zip.ZipInputStream
 object Articles {
     const val PASTED = "article"
     const val ECONOMIST = "economist"
-    val formats = setOf(PASTED, ECONOMIST)
+    val formats = setOf(PASTED, ECONOMIST, ExamPaper.FORMAT)
     const val MAX_TEXT = 200_000
     /** Whole articles fit into one AI request; longer pasted text is cut at this size. */
     const val MAX_AI_CONTEXT = 24_000
@@ -55,6 +55,10 @@ object Articles {
         val body = book.chapters.flatMap { c -> c.paragraphs.filterNot { it.heading }.map { it.text } }
         return build(book.title, body, now, PASTED, author = "本地文件")
     }
+
+    /** The page's share image, for the article list. */
+    fun imageUrl(html: String, url: String): String? = Jsoup.parse(html, url).selectFirst("meta[property=og:image], meta[name=twitter:image]")
+        ?.absUrl("content")?.takeIf { it.startsWith("http") }
 
     fun firstUrl(text: String): String? = Regex("https?://[^\\s<>\"'“”]+").find(text)?.value?.trimEnd('.', ',', ')', '）', '。')
 
@@ -106,6 +110,10 @@ object Articles {
         append(book.title)
         if (book.subtitle.isNotBlank()) append("\n").append(book.subtitle)
         book.chapters.forEach { c -> c.paragraphs.filterNot { it.heading }.forEach { append("\n\n").append(it.text) } }
+        if (book.questions.isNotEmpty()) {
+            append("\n\n【题目】")
+            book.questions.forEach { append("\n\n").append(it.describe()) }
+        }
     }.take(MAX_AI_CONTEXT)
 
     /**
@@ -128,8 +136,13 @@ object EconomistIssue {
         return runCatching { val files = unzip(bytes); isEconomist(files) }.getOrDefault(false)
     }
 
+    /** Articles plus each article's lead image, keyed by article id. */
+    data class Imported(val articles: List<Book>, val images: Map<String, ByteArray>)
+
     /** Returns null when the EPUB is not an Economist issue. */
-    fun read(bytes: ByteArray, now: Long = System.currentTimeMillis()): List<Book>? {
+    fun read(bytes: ByteArray, now: Long = System.currentTimeMillis()): List<Book>? = readWithImages(bytes, now)?.articles
+
+    fun readWithImages(bytes: ByteArray, now: Long = System.currentTimeMillis()): Imported? {
         val files = unzip(bytes)
         if (!isEconomist(files)) return null
         val opfPath = opfPath(files)
@@ -142,6 +155,7 @@ object EconomistIssue {
         val ncx = ncxPath?.let { files[it] }?.let { Jsoup.parse(decode(it), "", Parser.xmlParser()) }
             ?: error("这期经济学人缺少目录")
         val books = mutableListOf<Book>()
+        val images = mutableMapOf<String, ByteArray>()
         val seen = mutableSetOf<String>()
         ncx.select("navMap > navPoint").forEach { sectionPoint ->
             val section = sectionPoint.selectFirst("> navLabel > text")?.text()?.trim().orEmpty()
@@ -154,22 +168,28 @@ object EconomistIssue {
                 val base = base(path)
                 if (!seen.add(base)) return@forEach
                 val parts = spine.filter { base(it) == base }.ifEmpty { listOf(path) }
-                article(parts.mapNotNull { files[it] }, label, section, issue, now + books.size)?.let { books += it }
+                article(parts.mapNotNull { p -> files[p]?.let { p to it } }, label, section, issue, now + books.size)?.let { (book, image) ->
+                    books += book
+                    image?.let { files[it] }?.let { images[book.id] = it }
+                }
             }
         }
         require(books.isNotEmpty()) { "没有在这期经济学人里找到文章正文" }
-        return books
+        return Imported(books, images)
     }
 
-    private fun article(documents: List<ByteArray>, label: String, section: String, issue: String, now: Long): Book? {
+    private fun article(documents: List<Pair<String, ByteArray>>, label: String, section: String, issue: String, now: Long): Pair<Book, String?>? {
         var title = ""; var rubric = ""; var date = ""
         var started = false
+        var image: String? = null
         val body = mutableListOf<String>()
-        documents.forEach { bytes ->
+        documents.forEach { (path, bytes) ->
             val doc = Jsoup.parse(decode(bytes))
             doc.body().allElements.forEach { e ->
                 when {
                     e.hasClass("te_article_title") -> { title = e.text().trim(); started = true }
+                    started && image == null && e.normalName() == "img" && e.attr("src").isNotBlank() ->
+                        image = runCatching { resolve(path, e.attr("src")) }.getOrNull()
                     e.hasClass("te_article_rubric") -> rubric = e.text().trim()
                     e.hasClass("te_article_datepublished") -> date = e.text().trim()
                     started && e.normalName() == "p" && e.parents().none { it.normalName() == "p" } -> {
@@ -185,7 +205,7 @@ object EconomistIssue {
         if (!started || body.sumOf { TextLocator.wordCount(it) } < MIN_WORDS) return null
         val heading = title.ifBlank { label }.ifBlank { return null }
         return Articles.build(heading, body, now, Articles.ECONOMIST, author = listOf("The Economist", date).filter { it.isNotBlank() }.joinToString(" · "),
-            collection = issue, section = section, subtitle = rubric)
+            collection = issue, section = section, subtitle = rubric) to image
     }
 
     private fun isEconomist(files: Map<String, ByteArray>): Boolean {
@@ -230,8 +250,8 @@ object EconomistIssue {
                 require(++count <= 6000) { "EPUB 内部文件过多" }
                 val name = entry.name
                 require(!name.startsWith('/') && name.split('/').none { it == ".." }) { "EPUB 包含无效内部路径" }
-                // Images are not needed for reading; skip their bytes to keep memory low.
-                val wanted = !entry.isDirectory && Regex("\\.(x?html?|opf|ncx|xml)$", RegexOption.IGNORE_CASE).containsMatchIn(name)
+                // Text files plus images for the article list's thumbnails.
+                val wanted = !entry.isDirectory && Regex("\\.(x?html?|opf|ncx|xml|jpe?g|png|webp|gif)$", RegexOption.IGNORE_CASE).containsMatchIn(name)
                 if (wanted) {
                     val data = zip.readLimited(16 * 1024 * 1024)
                     total += data.size

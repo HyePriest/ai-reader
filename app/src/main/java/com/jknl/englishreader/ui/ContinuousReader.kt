@@ -97,6 +97,7 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
     var aiQuestion by remember { mutableStateOf<ReadingQuestion?>(null) }
     var aiError by remember { mutableStateOf<String?>(null) }
     var aiInitial by remember { mutableStateOf<String?>(null) }
+    var examOpen by rememberSaveable { mutableStateOf(false) }
     val chats = remember { ArticleChats(context.applicationContext) }
     fun askArticle(question: ReadingQuestion, initial: String? = null) { aiInitial = initial; aiRanges = question.passages; aiQuestion = question }
     var annotation by remember { mutableStateOf<Pair<Paragraph, Int>?>(null) }
@@ -191,6 +192,7 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
                         Text("${book.chapters[chapterIndex].title}  ·  ${book.chapters[chapterIndex].coverage()}", fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("全书 ${book.countLabel} · 本章 ${book.chapters[chapterIndex].countLabel}", fontSize = 10.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    if (book.questions.isNotEmpty()) TextButton(onClick = { closePanel(); examOpen = true }, modifier = Modifier.testTag("open-exam")) { Text("做题") }
                     if (book.isArticle) TextButton(onClick = { closePanel(); askArticle(ReadingQuestions.wholeArticle(book)) },
                         modifier = Modifier.testTag("ask-article")) { Text("问 AI") }
                     GlyphButton("search", if (book.isArticle) "搜索全文" else "搜索本书", { closePanel(); searchOpen = true })
@@ -231,6 +233,7 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
         }
     }
     annotation?.let { (paragraph, index) -> AnnotationDialog(paragraph, index, onDismiss = { annotation = null }) }
+    if (examOpen) ExamSheet(book, onDismiss = { examOpen = false }, onExplain = { prompt -> examOpen = false; askArticle(ReadingQuestions.wholeArticle(book), prompt) })
     aiQuestion?.let { question -> ReadingQuestionSheet(question,
         initialHistory = remember(question) { if (question.wholeArticle) chats.read(book.id) else emptyList() },
         onHistory = { history -> if (question.wholeArticle) scope.launch(Dispatchers.IO) { runCatching { if (history.isEmpty()) chats.clear(book.id) else chats.write(book.id, history) } } },

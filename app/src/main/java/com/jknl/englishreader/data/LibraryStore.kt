@@ -56,12 +56,20 @@ class LibraryStore(private val context: Context) {
     /** An Economist issue becomes separate articles; every other file stays one book. */
     fun importAny(uri: Uri): ImportResult {
         val bytes = readUri(uri)
-        if (bytes.size >= 2 && bytes[0] == 80.toByte() && bytes[1] == 75.toByte()) EconomistIssue.read(bytes)?.let { return ImportResult.Issue(it) }
+        if (bytes.size >= 2 && bytes[0] == 80.toByte() && bytes[1] == 75.toByte())
+            EconomistIssue.readWithImages(bytes)?.let { return ImportResult.Issue(it.articles, it.images) }
+        // Converted past papers often start with an HTML comment, so only binary formats are excluded here.
+        else if (bytes.isNotEmpty() && bytes.size < 2 * 1024 * 1024 && !bytes.take(5).toByteArray().toString(Charsets.US_ASCII).startsWith("%PDF")) {
+            val text = DocumentImporter.decode(bytes)
+            if (ExamPaper.looksLike(text)) return ImportResult.Issue(ExamPaper.read(text))
+        }
         return ImportResult.Single(importBytes(bytes, fileName(uri)))
     }
 
     /** Saves articles that are not on the device yet. Existing ones keep their progress and chats. */
     @Synchronized fun saveNew(articles: List<Book>): List<Book> = articles.filter { !File(directory, "${it.id}.json").exists() }.onEach { save(it) }
+
+    fun saveImage(id: String, bytes: ByteArray) { runCatching { BookCovers(context).save(id, bytes) } }
 
     fun exists(id: String) = id.matches(Regex("[a-f0-9]{24}")) && File(directory, "$id.json").exists()
 
@@ -168,6 +176,8 @@ class LibraryStore(private val context: Context) {
         if (book.section.isNotEmpty()) put("section", book.section)
         if (book.subtitle.isNotEmpty()) put("subtitle", book.subtitle)
         if (book.source.isNotEmpty()) put("source", book.source)
+        if (book.titleZh.isNotEmpty()) put("titleZh", book.titleZh)
+        if (book.questions.isNotEmpty()) put("questions", ExamQuestion.encode(book.questions))
         put("contents", array(book.contents.map { e -> JSONObject().put("title", e.title).put("chapter", e.chapter)
             .put("paragraph", e.paragraph).put("character", e.character).put("depth", e.depth) }))
         put("chapters", array(book.chapters.map { chapter -> JSONObject().apply {
@@ -208,13 +218,14 @@ class LibraryStore(private val context: Context) {
             }, root.getLong("importedAt"), root.optString("sourceFormat", ""),
             (root.optJSONArray("contents") ?: JSONArray()).objects().map { e -> ContentsEntry(e.getString("title"), e.getInt("chapter"),
                 e.optInt("paragraph"), e.optInt("character"), e.optInt("depth")) },
-            root.optString("collection", ""), root.optString("section", ""), root.optString("subtitle", ""), root.optString("source", ""))
+            root.optString("collection", ""), root.optString("section", ""), root.optString("subtitle", ""), root.optString("source", ""),
+            root.optString("titleZh", ""), root.optJSONArray("questions")?.let { ExamQuestion.decode(it) } ?: emptyList())
     }
 }
 
 sealed interface ImportResult {
     data class Single(val book: Book) : ImportResult
-    data class Issue(val articles: List<Book>) : ImportResult
+    data class Issue(val articles: List<Book>, val images: Map<String, ByteArray> = emptyMap()) : ImportResult
 }
 
 /** One saved whole-article conversation per article, kept on the device only. */

@@ -98,6 +98,9 @@ class ArticlesTest {
         assertTrue(articles.size > 40)
         assertTrue(articles.all { it.wordCount >= 120 })
         assertEquals(articles.size, articles.map { it.id }.distinct().size)
+        val images = EconomistIssue.readWithImages(File(path).readBytes())!!.images
+        println("images=${images.size} first=${images.values.first().size} bytes")
+        assertTrue(images.size > articles.size / 2)
     }
 
     private fun sampleIssue(): ByteArray {

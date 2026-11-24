@@ -97,8 +97,27 @@ fun ReaderApp(incoming: android.content.Intent? = null, onIncomingHandled: () ->
     }
     fun openSaved(book: Book) { activeBook = book; activeId = book.id }
     fun addToList(added: List<Book>) { if (added.isNotEmpty()) books = added.map { ShelfBook.from(it) } + books.filter { b -> added.none { it.id == b.id } } }
+    suspend fun saveIssue(result: ImportResult.Issue) {
+        val added = withContext(Dispatchers.IO) {
+            store.saveNew(result.articles).onEach { a -> result.images[a.id]?.let { store.saveImage(a.id, it) } }
+        }
+        addToList(added); tab = "articles"
+        val first = result.articles.first()
+        val unit = if (first.sourceFormat == ExamPaper.FORMAT) "部分" else "篇"
+        notice = "已导入 ${first.collection}：共 ${result.articles.size} $unit" +
+            if (added.size < result.articles.size) "（${result.articles.size - added.size} $unit 已在，进度保留）" else ""
+    }
     /** Pasted or shared text, or a single link: becomes an article and opens immediately. */
     fun openText(raw: String) {
+        if (ExamPaper.looksLike(raw)) {
+            scope.launch {
+                busy = "正在整理真题…"
+                try { saveIssue(ImportResult.Issue(withContext(Dispatchers.IO) { ExamPaper.read(raw) })) }
+                catch (e: Exception) { error = e.message ?: "真题没能识别" }
+                finally { busy = "" }
+            }
+            return
+        }
         scope.launch {
             busy = if (Articles.isLinkOnly(raw)) "正在打开网页并提取正文…" else "正在整理文章…"
             try {
@@ -107,7 +126,13 @@ fun ReaderApp(incoming: android.content.Intent? = null, onIncomingHandled: () ->
                     val article = if (url != null && Articles.isLinkOnly(raw)) {
                         val page = org.jsoup.Jsoup.connect(url).userAgent("Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Mobile")
                             .timeout(20_000).maxBodySize(8 * 1024 * 1024).followRedirects(true).get()
-                        Articles.fromHtml(page.outerHtml(), url)
+                        val html = page.outerHtml()
+                        Articles.fromHtml(html, url).also { a ->
+                            if (!store.exists(a.id)) Articles.imageUrl(html, url)?.let { image ->
+                                runCatching { org.jsoup.Jsoup.connect(image).ignoreContentType(true).timeout(15_000).maxBodySize(4 * 1024 * 1024).execute().bodyAsBytes() }
+                                    .getOrNull()?.let { store.saveImage(a.id, it) }
+                            }
+                        }
                     } else Articles.fromText(raw)
                     if (store.exists(article.id)) store.open(article.id) else article.also { store.save(it) }
                 }
@@ -124,12 +149,7 @@ fun ReaderApp(incoming: android.content.Intent? = null, onIncomingHandled: () ->
             busy = "正在整理…"
             try {
                 when (val result = withContext(Dispatchers.IO) { store.importAny(uri) }) {
-                    is ImportResult.Issue -> {
-                        val added = withContext(Dispatchers.IO) { store.saveNew(result.articles) }
-                        addToList(added); tab = "articles"
-                        val name = result.articles.first().collection
-                        notice = "已导入 $name：共 ${result.articles.size} 篇" + if (added.size < result.articles.size) "（${result.articles.size - added.size} 篇已在，进度保留）" else ""
-                    }
+                    is ImportResult.Issue -> saveIssue(result)
                     is ImportResult.Single -> {
                         val book = result.book
                         if (asArticle && book.wordCount in 1..15_000) {
@@ -162,6 +182,24 @@ fun ReaderApp(incoming: android.content.Intent? = null, onIncomingHandled: () ->
             val ids = list.map { it.id }.toSet()
             books = books.filterNot { it.id in ids }
         }
+    }
+    // Chinese titles for article lists: one batched request per new set of articles, when a key is configured.
+    val titleTranslator = remember { TitleTranslator(context.applicationContext) }
+    val titleAttempted = remember { mutableSetOf<String>() }
+    LaunchedEffect(books) {
+        val missing = books.filter { it.isArticle && it.sourceFormat != ExamPaper.FORMAT && it.titleZh.isBlank() && it.id !in titleAttempted }
+        if (missing.isEmpty() || !titleTranslator.available()) return@LaunchedEffect
+        titleAttempted += missing.map { it.id }
+        // Not tied to this effect: a later list change must not cancel a request already paid for.
+        scope.launch { try {
+            val titles = titleTranslator.translate(missing.map { it.id to (it.title + if (it.subtitle.isNotBlank()) " —— ${it.subtitle}" else "") })
+            val updated = withContext(Dispatchers.IO) {
+                titles.mapNotNull { (id, zh) -> runCatching { store.open(id).copy(titleZh = zh).also { store.save(it) } }.getOrNull() }
+            }
+            val byId = updated.associate { it.id to ShelfBook.from(it) }
+            books = books.map { byId[it.id] ?: it }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { /* Titles are optional; the English title still shows. */ } }
     }
     LaunchedEffect(incoming) {
         val intent = incoming ?: return@LaunchedEffect

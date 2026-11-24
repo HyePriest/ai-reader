@@ -11,7 +11,7 @@ data class ShelfChapter(val words: Int, val lengths: List<Int>, val translated: 
 /** Small, disposable metadata. The original book remains the only source of truth. */
 data class ShelfBook(val id: String, val title: String, val author: String, val importedAt: Long,
     val chapters: List<ShelfChapter>, val sourceFormat: String = "", val collection: String = "", val section: String = "",
-    val subtitle: String = "") {
+    val subtitle: String = "", val titleZh: String = "", val questionCount: Int = 0) {
     val isArticle get() = sourceFormat in Articles.formats
     val wordCount get() = chapters.sumOf { it.words }
     val isChinese get() = chapters.filter { it.words > 0 || it.chineseChars > 0 }.let { body -> body.isNotEmpty() && body.count { it.chinese } > body.size / 2 }
@@ -29,7 +29,7 @@ data class ShelfBook(val id: String, val title: String, val author: String, val 
     companion object {
         fun from(book: Book) = ShelfBook(book.id, book.title, book.author, book.importedAt,
             book.chapters.map { ShelfChapter(it.wordCount, it.paragraphs.map { p -> p.text.length }, it.alignments.isNotEmpty(), it.characterCount, it.isChinese) },
-            book.sourceFormat, book.collection, book.section, book.subtitle)
+            book.sourceFormat, book.collection, book.section, book.subtitle, book.titleZh, book.questions.size)
     }
 }
 
@@ -39,13 +39,14 @@ internal class ShelfIndex(private val directory: File) {
         AtomicFile(source).openRead().close()
         val cached = runCatching {
             val j = JSONObject(AtomicFile(File(directory, source.nameWithoutExtension + ".index")).openRead().bufferedReader().use { it.readText() })
-            require(j.getInt("version") == 3 && j.getLong("modified") == source.lastModified() && j.getLong("bytes") == source.length())
+            require(j.getInt("version") == 4 && j.getLong("modified") == source.lastModified() && j.getLong("bytes") == source.length())
             val a = j.getJSONArray("chapters")
             ShelfBook(j.getString("id"), j.getString("title"), j.getString("author"), j.getLong("importedAt"),
                 (0 until a.length()).map { i -> a.getJSONObject(i).let { c ->
                     val p = c.getJSONArray("lengths")
                     ShelfChapter(c.getInt("words"), (0 until p.length()).map { p.getInt(it) }, c.getBoolean("translated"), c.optInt("chineseChars"), c.optBoolean("chinese"))
-                } }, j.optString("sourceFormat"), j.optString("collection"), j.optString("section"), j.optString("subtitle")).also { require(it.chapters.isNotEmpty() && it.id == source.nameWithoutExtension) }
+                } }, j.optString("sourceFormat"), j.optString("collection"), j.optString("section"), j.optString("subtitle"),
+                    j.optString("titleZh"), j.optInt("questionCount")).also { require(it.chapters.isNotEmpty() && it.id == source.nameWithoutExtension) }
         }.getOrNull()
         return cached ?: scan(source).also { write(source, it) }
     }
@@ -53,9 +54,10 @@ internal class ShelfIndex(private val directory: File) {
     fun write(source: File, book: ShelfBook) {
         // An index write failure must never turn a successful book save into a failed import.
         runCatching {
-            val j = JSONObject().put("version", 3).put("modified", source.lastModified()).put("bytes", source.length())
+            val j = JSONObject().put("version", 4).put("modified", source.lastModified()).put("bytes", source.length())
                 .put("id", book.id).put("title", book.title).put("author", book.author).put("importedAt", book.importedAt)
                 .put("sourceFormat", book.sourceFormat).put("collection", book.collection).put("section", book.section).put("subtitle", book.subtitle)
+                .put("titleZh", book.titleZh).put("questionCount", book.questionCount)
                 .put("chapters", JSONArray().apply { book.chapters.forEach { c -> put(JSONObject()
                     .put("words", c.words).put("lengths", JSONArray(c.lengths)).put("translated", c.translated).put("chineseChars", c.chineseChars).put("chinese", c.chinese)) } })
             val atomic = AtomicFile(File(directory, "${book.id}.index"))
@@ -68,7 +70,7 @@ internal class ShelfIndex(private val directory: File) {
     /** First-run migration streams text; it does not allocate translations, notes or alignment trees. */
     private fun scan(source: File): ShelfBook = JsonReader(source.bufferedReader()).use { r ->
         var id = ""; var title = ""; var author = ""; var imported = 0L; var schema = 0
-        var format = ""; var collection = ""; var section = ""; var subtitle = ""
+        var format = ""; var collection = ""; var section = ""; var subtitle = ""; var titleZh = ""; var questionCount = 0
         val chapters = mutableListOf<ShelfChapter>()
         r.beginObject()
         while (r.hasNext()) when (r.nextName()) {
@@ -81,6 +83,8 @@ internal class ShelfIndex(private val directory: File) {
             "collection" -> collection = r.nextString()
             "section" -> section = r.nextString()
             "subtitle" -> subtitle = r.nextString()
+            "titleZh" -> titleZh = r.nextString()
+            "questions" -> { r.beginArray(); while (r.hasNext()) { questionCount++; r.skipValue() }; r.endArray() }
             "chapters" -> {
                 r.beginArray()
                 while (r.hasNext()) {
@@ -114,7 +118,7 @@ internal class ShelfIndex(private val directory: File) {
         }
         r.endObject()
         require(schema == 1 && id == source.nameWithoutExtension && chapters.isNotEmpty()) { "书目数据不完整或版本不受支持" }
-        ShelfBook(id, title, author, imported, chapters, format, collection, section, subtitle)
+        ShelfBook(id, title, author, imported, chapters, format, collection, section, subtitle, titleZh, questionCount)
     }
 }
 
