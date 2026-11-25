@@ -119,7 +119,7 @@ internal fun FindBar(query: String, onQuery: (String) -> Unit, index: Int, count
     val focus = remember { androidx.compose.ui.focus.FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     Surface(color = MaterialTheme.colorScheme.background, shadowElevation = 2.dp) {
-        Row(Modifier.fillMaxWidth().statusBarsPadding().heightIn(min = 60.dp).padding(horizontal = 6.dp).testTag("find-bar"),
+        Row(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).heightIn(min = 60.dp).padding(horizontal = 6.dp).testTag("find-bar"),
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             GlyphButton("close", "关闭搜索", onClose)
             Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh,

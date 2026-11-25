@@ -28,7 +28,7 @@ internal fun ReadingPanel(selection: Selection, wordMode: Boolean, result: WordR
     height: Dp, saved: Boolean, saving: Boolean, saveMessage: String?, onSave: () -> Unit, onNotebook: () -> Unit,
     onRetry: () -> Unit, onSettings: () -> Unit, onClose: () -> Unit, onAsk: ((String?) -> Unit)? = null) {
     Surface(Modifier.testTag("translation-panel"), color = MaterialTheme.colorScheme.surface, shadowElevation = 5.dp) {
-        Column(Modifier.fillMaxWidth().navigationBarsPadding().height(height).padding(horizontal = 22.dp, vertical = 8.dp)) {
+        Column(Modifier.fillMaxWidth().height(height).padding(horizontal = 22.dp, vertical = 8.dp)) {
             if (wordMode) Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 Text(selection.word.orEmpty(), modifier = Modifier.weight(1f),
                     fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif,

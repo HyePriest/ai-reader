@@ -165,7 +165,18 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
         if (wakeEnabled) activity?.readingAiTrigger = { wakeAi() }
         onDispose { activity?.readingAiTrigger = null }
     }
-    // System bars stay visible: the time and battery remain readable, and the back gesture works the first time.
+    // Immersive reading: system bars hidden, shown transiently by an edge swipe.
+    val window = (context as? Activity)?.window
+    DisposableEffect(window) {
+        window?.let {
+            WindowCompat.getInsetsController(it, it.decorView).apply {
+                systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                hide(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+        onDispose { window?.let { WindowCompat.getInsetsController(it, it.decorView).show(WindowInsetsCompat.Type.systemBars()) } }
+    }
+    // One press leaves the article unless a panel is open; the hidden toolbar never costs an extra press.
     BackHandler { when {
         selectingAi -> { selectingAi = false; aiPreview = emptyList(); aiRanges = emptyList() }
         selection != null -> closePanel()
@@ -221,7 +232,7 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
                 exit = androidx.compose.animation.slideOutVertically { -it } + androidx.compose.animation.fadeOut()) {
             Surface(modifier = Modifier.pointerInput(Unit) { detectTapGestures(onTap = {}) },
                 color = MaterialTheme.colorScheme.background.copy(alpha = .97f)) {
-                Row(Modifier.fillMaxWidth().statusBarsPadding().windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)).heightIn(min = 60.dp).testTag("reader-toolbar").padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).heightIn(min = 60.dp).testTag("reader-toolbar").padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     GlyphButton("back", if (book.isArticle) "返回" else "返回书架", onBack)
                     if (book.isArticle) Column(Modifier.weight(1f).padding(horizontal = 4.dp)) {
                         Text(listOf(book.collection, book.section).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { book.author }, fontSize = 11.sp, lineHeight = 14.sp,
@@ -244,10 +255,8 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
                 }
             }
             }
-            // The status bar strip keeps text from scrolling under the clock and battery.
-            Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars).background(MaterialTheme.colorScheme.background))
             val progressColor = MaterialTheme.colorScheme.primary
-            Canvas(Modifier.statusBarsPadding().fillMaxWidth().height(2.dp).align(androidx.compose.ui.Alignment.TopCenter)
+            Canvas(Modifier.fillMaxWidth().height(3.dp).align(androidx.compose.ui.Alignment.TopCenter)
                 .testTag("chapter-progress").semantics {
                     contentDescription = "${book.chapters[chapterIndex].title} 阅读进度"
                     progressBarRangeInfo = ProgressBarRangeInfo(chapterProgress, 0f..1f)
@@ -371,7 +380,7 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
     }
     LaunchedEffect(book.chapters) { latestProgress(progress(initial)) }
     val latestChrome by rememberUpdatedState(onChrome)
-    val toolbarInset = with(LocalDensity.current) { (80.dp + WindowInsets.statusBars.asPaddingValues().calculateTopPadding()).roundToPx() }
+    val toolbarInset = with(LocalDensity.current) { (80.dp + WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()).roundToPx() }
     val latestBlank by rememberUpdatedState(onBlank)
     fun currentPosition(): ReadingPosition {
         val row = rows[list.firstVisibleItemIndex.coerceIn(rows.indices)]
@@ -457,8 +466,9 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
                 is DragInteraction.Start -> { dragging = true; dragTravel = 0f }
                 is DragInteraction.Stop -> {
                     dragging = false
-                    // Reading on hides the toolbar; a tap brings it back.
+                    // Reading on hides the toolbar; scrolling back up or a tap brings it back.
                     if (dragTravel < -threshold) latestChrome(false)
+                    else if (dragTravel > threshold) latestChrome(true)
                     dragTravel = 0f
                 }
                 is DragInteraction.Cancel -> { dragging = false; dragTravel = 0f }
@@ -477,7 +487,7 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
     LazyColumn(state = list, userScrollEnabled = !selectingAi, modifier = Modifier.fillMaxSize().testTag("reading-body").nestedScroll(scroll)
         .pointerInput(Unit) { detectTapGestures(onTap = { latestBlank() }) },
         contentPadding = PaddingValues(start = 24.dp, end = 24.dp,
-            top = 76.dp + WindowInsets.statusBars.asPaddingValues().calculateTopPadding(), bottom = 48.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()),
+            top = 76.dp + WindowInsets.displayCutout.asPaddingValues().calculateTopPadding(), bottom = 48.dp),
         horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy((settings.size * .85f).dp)) {
         items(rows, key = { it.key }) { row ->

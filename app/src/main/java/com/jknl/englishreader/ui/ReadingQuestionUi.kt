@@ -1,4 +1,4 @@
-@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
 package com.jknl.englishreader.ui
 
 import android.content.Context
@@ -20,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -50,20 +51,22 @@ internal object ArticlePrompts {
     fun kind(q: ReadingQuestion) = when { q.wholeArticle -> "whole"; q.article.isNotBlank() -> "passage"; else -> "book" }
 }
 
-/** Full-screen conversation. Closing it never cancels a request: the session keeps running. */
+/** Conversation in a bottom sheet that does not drag, so scrolling never moves it. Closing never cancels a request. */
 @Composable
 internal fun ReadingQuestionScreen(session: ChatSession, initialQuestion: String?, onClose: () -> Unit, onReselect: () -> Unit,
     onAppend: () -> Unit, onOpenThread: (ChatThread) -> Unit) {
     val context = LocalContext.current.applicationContext
     LaunchedEffect(session) { if (!initialQuestion.isNullOrBlank()) ChatSessions.send(context, session, initialQuestion) }
     DisposableEffect(session) { session.visible = true; session.unseen = false; onDispose { ChatSessions.close(session) } }
-    BackHandler(onBack = onClose)
     var question by remember(session) { mutableStateOf("") }
+    ModalBottomSheet(onDismissRequest = onClose, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), sheetGesturesEnabled = false,
+        dragHandle = null, containerColor = MaterialTheme.colorScheme.background) {
     ReadingQuestionContent(session.question, session.thread, session.pending, session.error, session.highlight, question, { if (it.length <= 2000) question = it },
         onSend = { text -> ChatSessions.send(context, session, text); if (text == question.trim()) question = "" },
         onStop = { ChatSessions.stop(session) }, onClear = { ChatSessions.clear(context, session) },
         onUseArticle = { ChatSessions.setUseArticle(context, session, it) },
         onReselect = onReselect, onAppend = onAppend, onClose = onClose, onOpenThread = onOpenThread)
+    }
 }
 
 /** The conversation itself, separate from session state so it can be previewed and tested. */
@@ -82,55 +85,48 @@ internal fun ReadingQuestionContent(selection: ReadingQuestion, thread: ChatThre
     val busy = pending != null
     val article = selection.article.isNotBlank()
     val list = rememberLazyListState()
-    // Header items before the first exchange: quote, context switch, prompts.
-    val lead = 3
+    // Header items before the first exchange: quote and prompts.
+    val lead = 2
     LaunchedEffect(history.size, pending) { if (history.isNotEmpty() || pending != null) list.animateScrollToItem(lead + history.size + if (pending != null) 1 else 0) }
     LaunchedEffect(highlight) { if (highlight >= 0) list.animateScrollToItem(lead + highlight) }
-    Surface(Modifier.fillMaxSize().testTag("reading-question-sheet"), color = MaterialTheme.colorScheme.background) {
-        Column(Modifier.fillMaxSize().statusBarsPadding().imePadding()) {
-            Row(Modifier.padding(start = 4.dp, end = 4.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                GlyphButton("back", "返回阅读", onClose)
+    Surface(Modifier.fillMaxWidth().testTag("reading-question-sheet"), color = MaterialTheme.colorScheme.background) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(.9f).imePadding()) {
+            Row(Modifier.padding(start = 20.dp, end = 4.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(if (selection.wholeArticle) "问 AI · 全文" else "问 AI · 选文", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                     Text(selection.location, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Box {
                     GlyphButton("more", "更多", { menu = true })
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        if (!selection.wholeArticle) {
-                            DropdownMenuItem(text = { Text("重新选文") }, enabled = !busy, onClick = { menu = false; onReselect() })
-                            DropdownMenuItem(text = { Text("追加选文") }, enabled = !busy, onClick = { menu = false; onAppend() })
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(16.dp),
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                        if (article && !selection.wholeArticle) {
+                            MenuRow("doc", "参考全文", enabled = !busy, checked = selection.useArticle) { onUseArticle(!selection.useArticle) }
+                            HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
                         }
-                        DropdownMenuItem(text = { Text("本篇的问答记录") }, onClick = { menu = false; historyOpen = true })
-                        DropdownMenuItem(text = { Text("编辑常用问题") }, onClick = { menu = false; editing = true })
-                        if (history.isNotEmpty()) DropdownMenuItem(text = { Text("清空这段对话") }, enabled = !busy, onClick = { menu = false; onClear() })
+                        if (!selection.wholeArticle) {
+                            MenuRow("select", "重新选文", enabled = !busy) { menu = false; onReselect() }
+                            MenuRow("plus", "追加选文", enabled = !busy) { menu = false; onAppend() }
+                        }
+                        MenuRow("clock", "问答记录") { menu = false; historyOpen = true }
+                        MenuRow("edit", "常用问题") { menu = false; editing = true }
+                        if (history.isNotEmpty()) MenuRow("trash", "清空对话", enabled = !busy, danger = true) { menu = false; onClear() }
                     }
                 }
+                GlyphButton("close", "关闭", onClose)
             }
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 item(key = "quote") { if (!selection.wholeArticle) QuoteCard(selection.text) }
-                item(key = "context") {
-                    if (article && !selection.wholeArticle) Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("参考全文", fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                            Text(if (selection.useArticle) "AI 会读整篇文章再回答" else "只发选文和所在段落，更快更省；问与文章无关的问题时也合适",
-                                fontSize = 11.sp, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Switch(checked = selection.useArticle, onCheckedChange = onUseArticle, enabled = !busy, modifier = Modifier.testTag("use-article"))
-                    } else if (history.isEmpty() && pending == null) Text(if (selection.wholeArticle) "AI 会读整篇文章再回答，对话随文章保存。"
-                        else "发送时附带这段之前的上下文，不会带上后面的内容。", fontSize = 12.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
                 item(key = "prompts") {
                     if (history.isEmpty() && pending == null) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         prompts.forEach { prompt -> PromptChip(prompt) { if (prompt.endsWith("：")) onQuestion(prompt) else onSend(prompt) } }
-                        PromptChip("编辑", subtle = true) { editing = true }
                     }
                 }
                 itemsIndexed(history, key = { i, _ -> "turn-$i" }) { i, turn ->
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         UserBubble(turn.question)
-                        AnswerBlock(turn.answer, highlighted = i == highlight)
+                        AnswerBlock(turn.answer)
                     }
                 }
                 if (pending != null) item(key = "pending") {
@@ -141,7 +137,6 @@ internal fun ReadingQuestionContent(selection: ReadingQuestion, thread: ChatThre
                             CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                             Text(if (selection.sendsArticle) "正在读全文…" else "正在思考…", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Text("可以先返回继续阅读，回答好了会提醒你。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 if (error != null) item(key = "error") {
@@ -149,9 +144,6 @@ internal fun ReadingQuestionContent(selection: ReadingQuestion, thread: ChatThre
                         Text(error, color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 13.sp, modifier = Modifier.padding(12.dp))
                     }
                 }
-            }
-            if (history.isNotEmpty() && pending == null) LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(prompts) { prompt -> PromptChip(prompt, small = true) { if (prompt.endsWith("：")) onQuestion(prompt) else onSend(prompt) } }
             }
             Composer(question, onQuestion, busy, history.isEmpty(), onSend = { onSend(question.trim()) }, onStop = onStop)
         }
@@ -202,22 +194,26 @@ private fun AiBadge() {
 }
 
 @Composable
-private fun AnswerBlock(answer: String, highlighted: Boolean) {
+private fun AnswerBlock(answer: String) {
     val clipboard = LocalClipboardManager.current
     var copied by remember { mutableStateOf(false) }
     LaunchedEffect(copied) { if (copied) { kotlinx.coroutines.delay(1500); copied = false } }
-    Column(Modifier.fillMaxWidth().then(if (highlighted) Modifier.background(MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = .35f), RoundedCornerShape(12.dp)).padding(8.dp) else Modifier),
-        verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            AiBadge()
-            if (highlighted) Text("  之前问过，直接显示保存的回答", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.weight(1f))
-            IconButton(onClick = { clipboard.setText(AnnotatedString(answer)); copied = true }, modifier = Modifier.size(32.dp).testTag("copy-answer")) {
-                SmallGlyph(if (copied) "check" else "copy", if (copied) "已复制" else "复制回答")
-            }
-        }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        AiBadge()
         SelectionContainer { MarkdownText(answer, Modifier.fillMaxWidth().testTag("ai-answer")) }
+        IconButton(onClick = { clipboard.setText(AnnotatedString(answer)); copied = true }, modifier = Modifier.size(32.dp).offset(x = (-6).dp).testTag("copy-answer")) {
+            SmallGlyph(if (copied) "check" else "copy", if (copied) "已复制" else "复制回答")
+        }
     }
+}
+
+/** A menu row with an icon, so each action is recognisable at a glance. */
+@Composable
+internal fun MenuRow(icon: String, label: String, enabled: Boolean = true, checked: Boolean? = null, danger: Boolean = false, onClick: () -> Unit) {
+    DropdownMenuItem(text = { Text(label, fontSize = 15.sp, color = if (danger) MaterialTheme.colorScheme.error else Color.Unspecified) }, enabled = enabled, onClick = onClick,
+        leadingIcon = { SmallGlyph(icon, label) },
+        trailingIcon = if (checked == null) null else { { Switch(checked = checked, onCheckedChange = null, modifier = Modifier.scale(.75f).testTag("use-article")) } },
+        modifier = Modifier.widthIn(min = 200.dp))
 }
 
 @Composable
@@ -226,7 +222,7 @@ private fun Composer(value: String, onChange: (String) -> Unit, busy: Boolean, f
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp).navigationBarsPadding(), verticalAlignment = Alignment.Bottom) {
             Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.weight(1f)) {
                 TextField(value, onChange, modifier = Modifier.fillMaxWidth().testTag("reading-question-input"), maxLines = 5,
-                    placeholder = { Text(if (first) "问点什么，比如：我理解这里是……，对吗？" else "继续追问…", fontSize = 14.sp) },
+                    placeholder = { Text(if (first) "提问" else "继续追问", fontSize = 14.sp) },
                     textStyle = LocalTextStyle.current.copy(fontSize = 15.sp),
                     colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
                         disabledContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent,
@@ -246,7 +242,6 @@ private fun PromptEditor(initial: List<String>, onDismiss: () -> Unit, onSave: (
     var draft by remember { mutableStateOf("") }
     AlertDialog(onDismissRequest = onDismiss, title = { Text("常用问题") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("点一下就发送。以「：」结尾的会先填进输入框，方便补充。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             items.forEachIndexed { i, p ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(p, fontSize = 14.sp, modifier = Modifier.weight(1f))
@@ -272,7 +267,7 @@ private fun ThreadHistory(bookId: String, onDismiss: () -> Unit, onOpen: (ChatTh
     val threads by produceState<List<ChatThread>?>(null, bookId) {
         value = withContext(Dispatchers.IO) { runCatching { ChatStore(context).threads(bookId) }.getOrDefault(emptyList()) }.sortedByDescending { it.updatedAt }
     }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("本篇的问答记录") }, text = {
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("问答记录") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             val list = threads
             when {

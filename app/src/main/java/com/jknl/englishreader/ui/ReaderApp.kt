@@ -520,6 +520,14 @@ private fun Glyph(name: String, modifier: Modifier = Modifier) {
             "star" -> { val p = (0 until 10).map { i -> val r = if (i % 2 == 0) 9f else 4f; val a = Math.PI / 5 * i - Math.PI / 2
                     Offset((12 + r * Math.cos(a)).toFloat(), (12.5f + r * Math.sin(a)).toFloat()) }
                 p.indices.forEach { i -> line(p[i].x, p[i].y, p[(i + 1) % p.size].x, p[(i + 1) % p.size].y) } }
+            "edit" -> { line(5f, 19f, 6f, 15f); line(6f, 15f, 16f, 5f); line(16f, 5f, 19f, 8f); line(19f, 8f, 9f, 18f); line(9f, 18f, 5f, 19f) }
+            "trash" -> { line(4f, 7f, 20f, 7f); line(9f, 7f, 10f, 4f); line(10f, 4f, 14f, 4f); line(14f, 4f, 15f, 7f)
+                line(6f, 7f, 7f, 20f); line(7f, 20f, 17f, 20f); line(17f, 20f, 18f, 7f) }
+            "doc" -> { line(6f, 3f, 14f, 3f); line(14f, 3f, 18f, 7f); line(18f, 7f, 18f, 21f); line(18f, 21f, 6f, 21f); line(6f, 21f, 6f, 3f)
+                line(9f, 11f, 15f, 11f); line(9f, 15f, 15f, 15f) }
+            "clock" -> { drawCircle(color, 8.5f * u, Offset(12f * u, 12f * u), style = androidx.compose.ui.graphics.drawscope.Stroke(1.65f * u)); line(12f, 7f, 12f, 12f); line(12f, 12f, 15.5f, 14f) }
+            "select" -> { line(4f, 8f, 4f, 4f); line(4f, 4f, 8f, 4f); line(16f, 4f, 20f, 4f); line(20f, 4f, 20f, 8f)
+                line(20f, 16f, 20f, 20f); line(20f, 20f, 16f, 20f); line(8f, 20f, 4f, 20f); line(4f, 20f, 4f, 16f) }
             "more" -> for (y in listOf(5f, 12f, 19f)) drawCircle(color, 1.7f * u, Offset(12f * u, y * u))
             "close" -> { line(6f, 6f, 18f, 18f); line(18f, 6f, 6f, 18f) }
             "back" -> { line(15f, 5f, 8f, 12f); line(8f, 12f, 15f, 19f) }

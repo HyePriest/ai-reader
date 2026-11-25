@@ -5,10 +5,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import com.jknl.englishreader.data.*
 import com.jknl.englishreader.ui.*
@@ -253,5 +258,44 @@ class ScreenshotTest {
             } }
         }
         shoot("find")
+    }
+
+    @Test fun chatMenu() {
+        assumeTrue(out != null)
+        val book = Articles.fromText("Title here\n\nThe biomedical engineer, based at the Italian Institute of Technology in Genoa, has devised an assortment of nanotechnologies.\n\nMore text.")
+        val q = ReadingQuestions.selection(book, listOf(PassageRange(0, 1, 0, 60)))
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            EnglishReaderTheme("paper") { Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                ReadingQuestionContent(q, ChatThread.from(book.id, q).copy(exchanges = listOf(ReadingExchange("翻译这段并标出生词", "## 译文\n这位生物医学工程师……\n\n## 生词\n- **assortment** n. 各种各样"))),
+                    pending = null, error = null, highlight = 0,
+                    question = "", onQuestion = {}, onSend = {}, onStop = {}, onClear = {}, onUseArticle = {}, onReselect = {}, onAppend = {}, onClose = {})
+            } }
+        }
+        compose.onNodeWithContentDescription("更多").performClick()
+        shoot("chat-menu")
+    }
+
+    @Test fun menuRows() {
+        assumeTrue(out != null)
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            EnglishReaderTheme("paper") { Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                androidx.compose.foundation.layout.Box(Modifier.padding(24.dp)) {
+                    Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 3.dp) {
+                        androidx.compose.foundation.layout.Column(Modifier.width(240.dp).padding(vertical = 8.dp)) {
+                            MenuRow("doc", "参考全文", checked = true) {}
+                            androidx.compose.material3.HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                            MenuRow("select", "重新选文") {}
+                            MenuRow("plus", "追加选文") {}
+                            MenuRow("clock", "问答记录") {}
+                            MenuRow("edit", "常用问题") {}
+                            MenuRow("trash", "清空对话", danger = true) {}
+                        }
+                    }
+                }
+            } }
+        }
+        shoot("menu-rows")
     }
 }

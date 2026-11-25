@@ -203,9 +203,7 @@ private fun KeyLookupCard(state: ExamState) {
     var error by remember { mutableStateOf<String?>(null) }
     Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth().testTag("key-lookup")) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(if (busy) "正在联网查找「${state.book.collection}」的答案，并用题目核对卷子，通常要 1–2 分钟…"
-                else "这部分还没有参考答案。可以让 DeepSeek 联网查官方答案；查不到时由 AI 作答并标出没把握的题。",
-                fontSize = 13.sp, lineHeight = 19.sp)
+            if (busy) Text("正在联网查答案…", fontSize = 13.sp)
             error?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error) }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             else Button(onClick = {
@@ -228,11 +226,11 @@ internal fun KeySourceLine(state: ExamState) {
     val partAi = state.questions.count { it.number in state.aiJudged }
     if (state.sources.isNotEmpty() && partAi < state.questions.size) {
         val first = state.sources.first()
-        Text("答案来源：" + state.sources.take(2).joinToString("、") { it.title.take(18) } + " · 点击核对", fontSize = 12.sp,
+        Text("来源：" + state.sources.take(2).joinToString("、") { it.title.take(18) }, fontSize = 12.sp,
             color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.clickable { runCatching { uri.openUri(first.url) } }.padding(vertical = 2.dp))
     }
-    if (partAi > 0) Text("有 $partAi 题的答案由 AI 判断，可能有误" + if (state.uncertain.any { n -> state.questions.any { it.number == n } }) "；带 ? 的题它没把握。" else "。",
+    if (partAi > 0) Text("$partAi 题为 AI 判断",
         fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 

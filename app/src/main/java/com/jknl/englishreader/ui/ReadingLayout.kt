@@ -98,7 +98,7 @@ internal fun ArticleFooter(book: Book, modifier: Modifier = Modifier, onAsk: (St
                 val marks = remember { ReadingMarks(context) }
                 var starred by remember(book.id) { mutableStateOf(marks.favorite(book.id)) }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (book.questions.isNotEmpty()) "读完了，开始做题吧" else "读完了", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                    Text("读完了", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, modifier = Modifier.weight(1f))
                     TextButton(onClick = { starred = !starred; marks.setFavorite(book.id, starred) }, modifier = Modifier.testTag("favorite-article")) {
                         Text(if (starred) "★ 已收藏" else "☆ 收藏")
                     }

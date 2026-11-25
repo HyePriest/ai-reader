@@ -88,7 +88,7 @@ internal fun GlobalSearchScreen(articles: List<ShelfBook>, store: LibraryStore, 
     Column(Modifier.fillMaxSize().statusBarsPadding().testTag("global-search")) {
         Row(Modifier.padding(horizontal = 6.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             GlyphButton("back", "返回", onBack)
-            OutlinedTextField(query, { query = it }, singleLine = true, placeholder = { Text("搜文章标题、正文或问 AI 的记录") },
+            OutlinedTextField(query, { query = it }, singleLine = true, placeholder = { Text("搜索") },
                 shape = RoundedCornerShape(24.dp), modifier = Modifier.weight(1f).focusRequester(focus).testTag("global-search-input"))
         }
         TabRow(selectedTabIndex = tab) {
@@ -98,10 +98,10 @@ internal fun GlobalSearchScreen(articles: List<ShelfBook>, store: LibraryStore, 
         val loading = if (tab == 0) articleHits == null else threadHits == null
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             when {
-                query.isBlank() -> item { Hint("输入英文或中文关键词。文章会搜标题、中文标题和正文；点正文结果会直接跳到原文并高亮。") }
-                loading -> item { Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp); Hint("  正在搜索…") } }
-                tab == 0 && articleHits.orEmpty().isEmpty() -> item { Hint("没有找到包含「${query.trim()}」的文章。") }
-                tab == 1 && threadHits.orEmpty().isEmpty() -> item { Hint("问 AI 的记录里没有「${query.trim()}」。") }
+                query.isBlank() -> item { }
+                loading -> item { CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) }
+                tab == 0 && articleHits.orEmpty().isEmpty() -> item { Hint("无结果") }
+                tab == 1 && threadHits.orEmpty().isEmpty() -> item { Hint("无结果") }
                 tab == 0 -> items(articleHits.orEmpty(), key = { it.article.id }) { hit ->
                     ResultCard(onClick = { onOpen(hit.article, if (hit.count > 0) query.trim() else null) }) {
                         Text(hit.article.title, fontFamily = ReadingSerif, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)

@@ -84,7 +84,6 @@ private fun ArticleHomeContent(articles: List<ShelfBook>, store: LibraryStore, o
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("读一篇", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif)
-                    Text("粘贴、分享或导入，打开就读", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 GlyphButton("search", "搜索文章和问 AI 记录", onSearch)
                 TextButton(onClick = onNotebook, modifier = Modifier.testTag("article-vocabulary")) { Text("生词本") }
@@ -124,11 +123,6 @@ private fun ArticleHomeContent(articles: List<ShelfBook>, store: LibraryStore, o
                 AssistChip(onClick = { openIssue = FAVORITES }, label = { Text("收藏 ${favorites.size}") }, modifier = Modifier.testTag("open-favorites"))
             }
         }
-        val continuing = recent.filter { it.progress(store.position(it)) < .95f }.take(2)
-        if (continuing.isNotEmpty()) item(key = "continue-title") { SectionLabel("继续阅读") }
-        items(continuing, key = { "continue-${it.id}" }) { article ->
-            ArticleCard(article, store, onClick = { onRead(article) }, onLongClick = { confirmDelete = article.title to listOf(article) })
-        }
         if (exams.isNotEmpty()) item(key = "exams-title") { SectionLabel("考研真题") }
         items(exams, key = { "exam-${it.first}" }) { (name, list) ->
             CollectionCard(name, list, store, exam = true, onClick = { openIssue = name }, onLongClick = { confirmDelete = name to list })
@@ -142,8 +136,7 @@ private fun ArticleHomeContent(articles: List<ShelfBook>, store: LibraryStore, o
             ArticleCard(article, store, onClick = { onRead(article) }, onLongClick = { confirmDelete = article.title to listOf(article) })
         }
         if (articles.isEmpty()) item(key = "empty") {
-            Text("还没有文章。在浏览器、公众号或文件管理器里选「分享 → ai reader」，也能直接打开。\n\n选中一段英文后，在弹出菜单里选「用 ai reader 阅读」同样可以。",
-                fontSize = 13.sp, lineHeight = 21.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp))
+            Text("还没有文章", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp))
         }
     }
     confirmDelete?.let { (name, list) -> DeleteDialog(name, list.size, onDismiss = { confirmDelete = null }) { onDelete(list); confirmDelete = null } }
@@ -201,7 +194,8 @@ internal fun IssueScreen(name: String, articles: List<ShelfBook>, store: Library
                     Box {
                         GlyphButton("more", "更多", { menu = true })
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(text = { Text(if (exam) "删除这份真题" else "删除本期") }, onClick = { menu = false; confirmDelete = name to articles })
+                            DropdownMenuItem(text = { Text(if (exam) "删除这份真题" else "删除本期", color = MaterialTheme.colorScheme.error) },
+                                leadingIcon = { SmallGlyph("trash", "删除") }, onClick = { menu = false; confirmDelete = name to articles })
                         }
                     }
                 }
@@ -209,10 +203,6 @@ internal fun IssueScreen(name: String, articles: List<ShelfBook>, store: Library
                     FilterChip(selected = !examOnly, onClick = { examOnly = false }, label = { Text("全部 ${articles.size}") })
                     FilterChip(selected = examOnly, onClick = { examOnly = true }, label = { Text("考研常见题材 · 400–1200 词") }, modifier = Modifier.testTag("exam-filter"))
                 }
-                if (examOnly) Text("按栏目和篇幅粗略筛选：科技、商业、经济、文化、社论等考研阅读常改编的题材。只是题材参考，不代表会考。",
-                    fontSize = 11.sp, lineHeight = 17.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp))
-                if (exam) Text("点一部分进入阅读，右上角「做题」作答，交卷后可以让 AI 逐题讲解。没有填写答案时，由 AI 判断答案，可能有误。",
-                    fontSize = 11.sp, lineHeight = 17.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
             }
         }
         featured?.let { f -> item(key = "featured") { FeaturedCard(f, store, onClick = { onRead(f) }, onLongClick = { confirmDelete = f.title to listOf(f) }) } }
@@ -257,8 +247,9 @@ private fun ArticleMenu(article: ShelfBook, open: Boolean, onDismiss: () -> Unit
     val actions = LocalArticleActions.current
     DropdownMenu(expanded = open, onDismissRequest = onDismiss) {
         if (actions != null) DropdownMenuItem(text = { Text(if (actions.isFavorite(article.id)) "取消收藏" else "收藏") },
-            onClick = { onDismiss(); actions.toggle(article) })
-        DropdownMenuItem(text = { Text("删除") }, onClick = { onDismiss(); onDelete() })
+            leadingIcon = { SmallGlyph("star", "收藏") }, onClick = { onDismiss(); actions.toggle(article) })
+        DropdownMenuItem(text = { Text("删除", color = MaterialTheme.colorScheme.error) }, leadingIcon = { SmallGlyph("trash", "删除") },
+            onClick = { onDismiss(); onDelete() })
     }
 }
 
@@ -277,7 +268,7 @@ private fun ArticleListScreen(title: String, articles: List<ShelfBook>, store: L
             }
         }
         if (articles.isEmpty()) item(key = "empty") {
-            Text(if (title == "收藏") "长按文章卡片，选「收藏」。" else "还没有读过文章。", fontSize = 13.sp,
+            Text(if (title == "收藏") "还没有收藏" else "还没有读过文章", fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp))
         }
         items(articles, key = { it.id }) { article ->
@@ -352,7 +343,6 @@ private fun AnswerKeyDialog(collection: String, onDismiss: () -> Unit) {
     val parsed = AnswerKey.parse(text)
     AlertDialog(onDismissRequest = onDismiss, title = { Text("参考答案") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("粘贴这份真题的答案，交卷后会直接判对错。支持「21-25 DDABA」「21.D 22.B」等写法，只填一部分也可以。", fontSize = 13.sp, lineHeight = 20.sp)
             OutlinedTextField(text, { if (it.length <= 4000) text = it }, minLines = 4, modifier = Modifier.fillMaxWidth().testTag("answer-key-input"),
                 placeholder = { Text("1-5 BCABD\n21-25 DDABA") })
             Text(if (parsed.isEmpty()) "还没有识别出答案" else "识别到 ${parsed.size} 题：${AnswerKey.format(parsed)}", fontSize = 12.sp,
