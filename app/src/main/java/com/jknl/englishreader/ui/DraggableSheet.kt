@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -56,11 +57,12 @@ internal fun DraggableSheet(onDismiss: () -> Unit, heightFraction: Float = .9f, 
     }
     fun close() { if (!closing) scope.launch { closing = true; animate(offset, height, 0f, tween(200)) { v, _ -> offset = v }; latestDismiss() } }
     BackHandler(onBack = ::close)
-    LaunchedEffect(height) {
-        if (height > 0f && offset == Float.MAX_VALUE) {
-            offset = height
-            animate(height, 0f, 0f, spring(dampingRatio = .85f, stiffness = Spring.StiffnessMediumLow)) { v, _ -> offset = v }
-        }
+    // Slide in once, after the first measurement. Keyed on nothing, so a later size change
+    // (insets, keyboard) cannot cancel the entrance and leave the sheet below the screen.
+    LaunchedEffect(Unit) {
+        val measured = snapshotFlow { height }.first { it > 0f }
+        offset = measured
+        animate(measured, 0f, 0f, spring(dampingRatio = .85f, stiffness = Spring.StiffnessMediumLow)) { v, _ -> offset = v }
     }
     val connection = remember {
         object : NestedScrollConnection {
