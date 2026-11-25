@@ -9,7 +9,7 @@ import org.json.JSONObject
 data class PassageRange(val chapter: Int, val paragraph: Int, val start: Int, val end: Int)
 /** [article] holds the whole text for a short article; then nothing is hidden from the model. */
 data class ReadingQuestion(val passages: List<PassageRange>, val text: String, val preceding: String, val location: String,
-    val article: String = "", val useArticle: Boolean = false, val withVocab: Boolean = false) {
+    val article: String = "", val useArticle: Boolean = false) {
     val wholeArticle: Boolean get() = passages.isEmpty() && article.isNotBlank()
     /** Whether the whole article goes with the question (always for whole-article questions). */
     val sendsArticle: Boolean get() = article.isNotBlank() && (wholeArticle || useArticle)
@@ -78,8 +78,7 @@ object ReadingQuestions {
         """.trimIndent()))
         if (selection.article.isNotBlank()) {
             messages.put(0, JSONObject().put("role", "system").put("content", articleRules +
-                (if (selection.sendsArticle) "" else "\n这次只提供了选文和它所在的段落，没有全文；需要全文才能回答时请直说。") +
-                (if (selection.wholeArticle || !selection.withVocab) "" else "\n讲解或翻译选文时，最后用「生词」小节列出学生可能不认识的词：每个词给词性、本句中的意思，考研大纲外词标注「超纲」，熟词僻义标注「熟词僻义」；没有就省略这一节。用户的问题与选文无关时直接回答，不必附生词。")))
+                (if (selection.sendsArticle) "" else "\n这次只提供了选文和它所在的段落，没有全文；需要全文才能回答时请直说。")))
             val material = JSONObject().put("文章位置", selection.location)
             if (selection.sendsArticle) material.put("全文", selection.article) else material.put("所在段落", selection.preceding)
             if (selection.text.isNotBlank()) material.put("重点选文", selection.text)

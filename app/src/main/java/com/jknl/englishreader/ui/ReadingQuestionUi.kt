@@ -41,16 +41,14 @@ internal class PromptSettings(context: Context) {
     fun get(kind: String): List<String> = prefs.getString(kind, null)?.split('\n')?.filter { it.isNotBlank() } ?: ArticlePrompts.defaults(kind)
     fun set(kind: String, prompts: List<String>) { prefs.edit().putString(kind, prompts.joinToString("\n")).apply() }
     fun reset(kind: String) { prefs.edit().remove(kind).apply() }
-    /** Whether passage answers end with a vocabulary list. Visible as a switch in the chat menu. */
-    var vocab: Boolean
-        get() = prefs.getBoolean("vocab", true)
-        set(value) { prefs.edit().putBoolean("vocab", value).apply() }
+
 }
 
 internal object ArticlePrompts {
     val whole = listOf("全文大意是什么？", "逐段概括段落大意", "作者的观点和态度是什么？", "挑出最难的 3 个长难句并拆解", "按考研阅读出 5 道选择题", "这篇文章值得积累哪些词组？")
-    val passage = listOf("翻译这段并标出生词", "拆解句子结构", "标出这段的生词", "这段在全文中起什么作用？", "解释这段话")
-    val book = listOf("解释这段话", "这里的言外之意是什么？", "分析句子结构", "标出这段的生词", "我的理解是：")
+    /** The first prompt asks for vocabulary explicitly; no other answer adds it. */
+    val passage = listOf("翻译这段，并列出生词：标注超纲词和熟词僻义", "拆解句子结构", "这段在全文中起什么作用？", "解释这段话")
+    val book = listOf("翻译这段，并列出生词：标注超纲词和熟词僻义", "解释这段话", "这里的言外之意是什么？", "分析句子结构", "我的理解是：")
     fun defaults(kind: String) = when (kind) { "whole" -> whole; "passage" -> passage; else -> book }
     fun kind(q: ReadingQuestion) = when { q.wholeArticle -> "whole"; q.article.isNotBlank() -> "passage"; else -> "book" }
 }
@@ -81,7 +79,7 @@ internal fun ReadingQuestionContent(selection: ReadingQuestion, thread: ChatThre
     val promptSettings = remember { PromptSettings(context) }
     val kind = ArticlePrompts.kind(selection)
     var prompts by remember(kind) { mutableStateOf(promptSettings.get(kind)) }
-    var vocab by remember { mutableStateOf(promptSettings.vocab) }
+
     var editing by remember { mutableStateOf(false) }
     var historyOpen by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
@@ -105,8 +103,7 @@ internal fun ReadingQuestionContent(selection: ReadingQuestion, thread: ChatThre
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(16.dp),
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh) {
                         if (article && !selection.wholeArticle) MenuRow("doc", "参考全文", enabled = !busy, checked = selection.useArticle) { onUseArticle(!selection.useArticle) }
-                        if (!selection.wholeArticle) MenuRow("type", "回答附生词", checked = vocab) { vocab = !vocab; promptSettings.vocab = vocab }
-                        if (!selection.wholeArticle) HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                        if (article && !selection.wholeArticle) HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
                         if (!selection.wholeArticle) {
                             MenuRow("select", "重新选文", enabled = !busy) { menu = false; onReselect() }
                             MenuRow("plus", "追加选文", enabled = !busy) { menu = false; onAppend() }

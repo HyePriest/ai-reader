@@ -54,8 +54,7 @@ internal object ChatSessions {
         val app = context.applicationContext
         session.job = scope.launch {
             try {
-                val asked = session.question.copy(withVocab = PromptSettings(app).vocab)
-                val answer = ReadingAssistant(app).ask(asked, session.thread.exchanges, question)
+                val answer = ReadingAssistant(app).ask(session.question, session.thread.exchanges, question)
                 session.thread = session.thread.copy(exchanges = session.thread.exchanges + ReadingExchange(question, answer),
                     updatedAt = System.currentTimeMillis(), text = session.question.text, location = session.question.location)
                 persist(app, session)

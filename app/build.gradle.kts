@@ -25,6 +25,8 @@ android {
         versionName = "0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Phones only: the x86 builds are for desktop emulators.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     signingConfigs {
@@ -41,9 +43,23 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.findByName("publicRelease")
+            // R8 removes unused library code and resources; rules for reflective code are in proguard-rules.pro.
             optimization {
-                enable = false
+                enable = true
+                keepRules { files.add(file("proguard-rules.pro")) }
             }
+        }
+        // Same as release but signed with the debug key, for trying a small build without the release keystore.
+        create("preview") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+        }
+    }
+    packaging {
+        resources {
+            // Post-quantum crypto tables shipped inside BouncyCastle; PDF decryption never uses them.
+            excludes += listOf("org/bouncycastle/pqc/**", "org/bouncycastle/x509/**", "DebugProbesKt.bin", "META-INF/*.version", "META-INF/versions/9/OSGI-INF/**")
         }
     }
     compileOptions {

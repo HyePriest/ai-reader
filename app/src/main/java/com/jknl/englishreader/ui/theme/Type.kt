@@ -14,7 +14,7 @@ val ReadingSerif = FontFamily(
     Font(R.font.literata_italic, FontWeight.Normal, FontStyle.Italic),
     Font(R.font.literata_medium, FontWeight.Medium),
     Font(R.font.literata_semibold, FontWeight.SemiBold),
-    Font(R.font.literata_bold, FontWeight.Bold),
+    Font(R.font.literata_semibold, FontWeight.Bold),
 )
 
 /** Inter for interface text and the sans reading option. */

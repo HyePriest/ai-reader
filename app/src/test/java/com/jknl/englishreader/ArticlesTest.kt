@@ -63,8 +63,8 @@ class ArticlesTest {
         val body = ReadingQuestions.body("m", passage, emptyList(), "Why?")
         assertTrue(body.contains("所在段落") && body.contains("First paragraph") && body.contains("Second paragraph"))
         assertFalse(body.contains("The LAST paragraph"))
-        assertFalse(body.contains("「生词」"))
-        assertTrue(ReadingQuestions.body("m", passage.copy(withVocab = true), emptyList(), "Why?").contains("「生词」"))
+        // No hidden vocabulary rule: only a prompt that asks for it gets it.
+        assertFalse(body.contains("生词"))
         val full = ReadingQuestions.body("m", passage.copy(useArticle = true), emptyList(), "Why?")
         assertTrue(full.contains("全文") && full.contains("The LAST paragraph"))
         val whole = ReadingQuestions.wholeArticle(book)
