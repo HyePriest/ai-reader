@@ -485,6 +485,11 @@ internal fun GlyphButton(name: String, description: String, action: () -> Unit) 
 }
 
 @Composable
+internal fun SmallGlyph(name: String, description: String) {
+    Box(Modifier.semantics { this.contentDescription = description }) { Glyph(name, Modifier.size(18.dp)) }
+}
+
+@Composable
 private fun IconGlyph(name: String, description: String) {
     Box(Modifier.semantics { this.contentDescription = description }) { Glyph(name, Modifier.size(21.dp)) }
 }
@@ -497,6 +502,12 @@ private fun Glyph(name: String, modifier: Modifier = Modifier) {
         fun line(x1: Float, y1: Float, x2: Float, y2: Float) = drawLine(color, Offset(x1 * u, y1 * u), Offset(x2 * u, y2 * u), 1.65f * u, cap = androidx.compose.ui.graphics.StrokeCap.Round)
         when (name) {
             "plus" -> { line(5f, 12f, 19f, 12f); line(12f, 5f, 12f, 19f) }
+            "copy" -> { line(9f, 9f, 19f, 9f); line(19f, 9f, 19f, 20f); line(19f, 20f, 9f, 20f); line(9f, 20f, 9f, 9f)
+                line(5f, 15f, 5f, 4f); line(5f, 4f, 15f, 4f) }
+            "check" -> { line(5f, 12.5f, 10f, 17.5f); line(10f, 17.5f, 19f, 7f) }
+            "star" -> { val p = (0 until 10).map { i -> val r = if (i % 2 == 0) 9f else 4f; val a = Math.PI / 5 * i - Math.PI / 2
+                    Offset((12 + r * Math.cos(a)).toFloat(), (12.5f + r * Math.sin(a)).toFloat()) }
+                p.indices.forEach { i -> line(p[i].x, p[i].y, p[(i + 1) % p.size].x, p[(i + 1) % p.size].y) } }
             "more" -> for (y in listOf(5f, 12f, 19f)) drawCircle(color, 1.7f * u, Offset(12f * u, y * u))
             "close" -> { line(6f, 6f, 18f, 18f); line(18f, 6f, 6f, 18f) }
             "back" -> { line(15f, 5f, 8f, 12f); line(8f, 12f, 15f, 19f) }

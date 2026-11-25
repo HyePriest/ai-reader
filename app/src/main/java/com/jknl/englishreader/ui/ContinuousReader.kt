@@ -7,6 +7,7 @@ import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.*
@@ -100,8 +101,11 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
     var aiInitial by remember { mutableStateOf<String?>(null) }
     var examOpen by rememberSaveable { mutableStateOf(initialExamOpen) }
     val exam = remember(book.id) { if (book.questions.isNotEmpty()) ExamState(book, ExamAnswers(context.applicationContext)) else null }
-    val chats = remember { ArticleChats(context.applicationContext) }
-    fun askArticle(question: ReadingQuestion, initial: String? = null) { aiInitial = initial; aiRanges = question.passages; aiQuestion = question }
+    var chat by remember { mutableStateOf<ChatSession?>(null) }
+    fun askArticle(question: ReadingQuestion, initial: String? = null) {
+        aiInitial = initial; aiRanges = question.passages; aiQuestion = question
+        chat = ChatSessions.open(context, book, question)
+    }
     var annotation by remember { mutableStateOf<Pair<Paragraph, Int>?>(null) }
     ReadingSession(book.id, trackingEnabled && !contents && !searchOpen && !notebookOpen && editing == null && !pdfOriginal)
     if (pdfOriginal) PdfOriginalDialog(book, chapterIndex) { pdfOriginal = false }
@@ -135,17 +139,13 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
         if (wakeEnabled) activity?.readingAiTrigger = { wakeAi() }
         onDispose { activity?.readingAiTrigger = null }
     }
-    val window = (context as? Activity)?.window
-    DisposableEffect(window) {
-        window?.let {
-            WindowCompat.getInsetsController(it, it.decorView).apply {
-                systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                hide(WindowInsetsCompat.Type.systemBars())
-            }
-        }
-        onDispose { window?.let { WindowCompat.getInsetsController(it, it.decorView).show(WindowInsetsCompat.Type.systemBars()) } }
-    }
-    BackHandler { when { selectingAi -> { selectingAi = false; aiPreview = emptyList(); aiRanges = emptyList() }; selection != null -> closePanel(); !chrome -> chrome = true; else -> onBack() } }
+    // System bars stay visible: the time and battery remain readable, and the back gesture works the first time.
+    BackHandler { when {
+        selectingAi -> { selectingAi = false; aiPreview = emptyList(); aiRanges = emptyList() }
+        selection != null -> closePanel()
+        examOpen -> examOpen = false
+        else -> onBack()
+    } }
     // Hidden system bars must not reserve empty strips. Transient bars overlay the page.
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wordHeight = minOf(360.dp, maxHeight * .48f)
@@ -165,8 +165,10 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
         Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f)) {
             ContinuousParagraphs(book, rows, list, store, settings, initial, selection, wordMode, Modifier.fillMaxSize(), jump,
-                onJumpDone = { jump = null }, onChapter = { chapterIndex = it }, onProgress = { chapterProgress = it }, onChrome = { chrome = it }, onBlank = { closePanel(); chrome = true },
+                onJumpDone = { jump = null }, onChapter = { chapterIndex = it }, onProgress = { chapterProgress = it }, onChrome = { chrome = it }, onBlank = { if (selection != null) closePanel() else chrome = !chrome },
                 onSelect = { picked ->
+                    // While the toolbar is hidden, the first tap only brings it back.
+                    if (!chrome && selection == null) { chrome = true; return@ContinuousParagraphs }
                     cancelLookup()
                     val now = SystemClock.uptimeMillis()
                     val identity = picked.chapterIndex to picked.range
@@ -177,16 +179,19 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
                 onAiPreview = { aiPreview = it }, onAiPicked = { ranges ->
                     try {
                         val question = ReadingQuestions.selection(book, aiRanges + ranges)
-                        aiRanges = question.passages; aiQuestion = question; selectingAi = false; aiPreview = emptyList()
+                        selectingAi = false; aiPreview = emptyList(); askArticle(question)
                     } catch (e: Exception) { aiError = e.message }
                 }, onAiCancel = { selectingAi = false; aiPreview = emptyList(); aiRanges = emptyList() },
                 searchHit = searchHit, searchJump = searchJump, onSearchJumpDone = { searchJump = null },
                 onAskArticle = { prompt -> closePanel(); askArticle(ReadingQuestions.wholeArticle(book), prompt) }, onExam = { closePanel(); examOpen = true },
                 exam = exam, examActive = examOpen, onClozeBlank = { n -> closePanel(); exam?.goTo(n); examOpen = true })
             // Overlay instead of inserting/removing a row above the list: no text jumps on title changes.
-            if (chrome && !selectingAi) Surface(modifier = Modifier.pointerInput(Unit) { detectTapGestures(onTap = {}) },
+            androidx.compose.animation.AnimatedVisibility(chrome && !selectingAi,
+                enter = androidx.compose.animation.slideInVertically { -it } + androidx.compose.animation.fadeIn(),
+                exit = androidx.compose.animation.slideOutVertically { -it } + androidx.compose.animation.fadeOut()) {
+            Surface(modifier = Modifier.pointerInput(Unit) { detectTapGestures(onTap = {}) },
                 color = MaterialTheme.colorScheme.background.copy(alpha = .97f)) {
-                Row(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).heightIn(min = 64.dp).testTag("reader-toolbar").padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().statusBarsPadding().windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)).heightIn(min = 60.dp).testTag("reader-toolbar").padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     GlyphButton("back", if (book.isArticle) "返回" else "返回书架", onBack)
                     if (book.isArticle) Column(Modifier.weight(1f).padding(horizontal = 4.dp)) {
                         Text(listOf(book.collection, book.section).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { book.author }, fontSize = 11.sp, lineHeight = 14.sp,
@@ -208,8 +213,11 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
                     GlyphButton("type", "阅读设置", onSettings)
                 }
             }
+            }
+            // The status bar strip keeps text from scrolling under the clock and battery.
+            Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars).background(MaterialTheme.colorScheme.background))
             val progressColor = MaterialTheme.colorScheme.primary
-            Canvas(Modifier.fillMaxWidth().height(3.dp).align(androidx.compose.ui.Alignment.TopCenter)
+            Canvas(Modifier.statusBarsPadding().fillMaxWidth().height(2.dp).align(androidx.compose.ui.Alignment.TopCenter)
                 .testTag("chapter-progress").semantics {
                     contentDescription = "${book.chapters[chapterIndex].title} 阅读进度"
                     progressBarRangeInfo = ProgressBarRangeInfo(chapterProgress, 0f..1f)
@@ -244,13 +252,26 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
     }
     annotation?.let { (paragraph, index) -> AnnotationDialog(paragraph, index, onDismiss = { annotation = null }) }
 
-    aiQuestion?.let { question -> ReadingQuestionSheet(question,
-        initialHistory = remember(question) { if (question.wholeArticle) chats.read(book.id) else emptyList() },
-        onHistory = { history -> if (question.wholeArticle) scope.launch(Dispatchers.IO) { runCatching { if (history.isEmpty()) chats.clear(book.id) else chats.write(book.id, history) } } },
-        initialQuestion = aiInitial,
-        onDismiss = { aiQuestion = null; aiRanges = emptyList(); aiInitial = null },
-        onReselect = { aiQuestion = null; aiRanges = emptyList(); aiPreview = emptyList(); selectingAi = true },
-        onAppend = { aiQuestion = null; aiPreview = emptyList(); selectingAi = true }) }
+    // Answers still coming, or ready while the chat was closed: a small reminder over the page.
+    val active = ChatSessions.active(book.id).filter { it !== chat }
+    if (chat == null && active.isNotEmpty()) Box(Modifier.fillMaxSize().navigationBarsPadding().padding(bottom = 20.dp), contentAlignment = androidx.compose.ui.Alignment.BottomCenter) {
+        val ready = active.firstOrNull { it.unseen }
+        Surface(onClick = { val s = ready ?: active.first(); aiInitial = null; aiRanges = s.question.passages; aiQuestion = s.question; chat = s },
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.inverseSurface, shadowElevation = 6.dp, modifier = Modifier.testTag("chat-reminder")) {
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                if (ready == null) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.inverseOnSurface)
+                Text(if (ready != null) "AI 回答好了 · 点开查看" else "  AI 正在回答…", fontSize = 13.sp, color = MaterialTheme.colorScheme.inverseOnSurface)
+            }
+        }
+    }
+    chat?.let { session -> key(session) { ReadingQuestionScreen(session, aiInitial,
+        onClose = { chat = null; aiQuestion = null; aiRanges = emptyList(); aiInitial = null },
+        onReselect = { chat = null; aiQuestion = null; aiRanges = emptyList(); aiPreview = emptyList(); selectingAi = true },
+        onAppend = { chat = null; aiQuestion = null; aiPreview = emptyList(); selectingAi = true },
+        onOpenThread = { t ->
+            val q = if (t.whole) ReadingQuestions.wholeArticle(book) else runCatching { ReadingQuestions.selection(book, t.passages) }.getOrNull()
+            if (q != null) askArticle(q) else aiError = "这段原文已经找不到了"
+        }) } }
     aiError?.let { message -> AlertDialog(onDismissRequest = { aiError = null }, text = { Text(message) },
         confirmButton = { TextButton(onClick = { aiError = null }) { Text("好的") } }) }
     if (notebookOpen) WordNotebookDialog { notebookOpen = false }
@@ -319,7 +340,7 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
     }
     LaunchedEffect(book.chapters) { latestProgress(progress(initial)) }
     val latestChrome by rememberUpdatedState(onChrome)
-    val toolbarInset = with(LocalDensity.current) { (88.dp + WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()).roundToPx() }
+    val toolbarInset = with(LocalDensity.current) { (80.dp + WindowInsets.statusBars.asPaddingValues().calculateTopPadding()).roundToPx() }
     val latestBlank by rememberUpdatedState(onBlank)
     fun currentPosition(): ReadingPosition {
         val row = rows[list.firstVisibleItemIndex.coerceIn(rows.indices)]
@@ -405,8 +426,8 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
                 is DragInteraction.Start -> { dragging = true; dragTravel = 0f }
                 is DragInteraction.Stop -> {
                     dragging = false
+                    // Reading on hides the toolbar; a tap brings it back.
                     if (dragTravel < -threshold) latestChrome(false)
-                    else if (dragTravel > threshold) latestChrome(true)
                     dragTravel = 0f
                 }
                 is DragInteraction.Cancel -> { dragging = false; dragTravel = 0f }
@@ -425,7 +446,7 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
     LazyColumn(state = list, userScrollEnabled = !selectingAi, modifier = Modifier.fillMaxSize().testTag("reading-body").nestedScroll(scroll)
         .pointerInput(Unit) { detectTapGestures(onTap = { latestBlank() }) },
         contentPadding = PaddingValues(start = 24.dp, end = 24.dp,
-            top = 84.dp + WindowInsets.displayCutout.asPaddingValues().calculateTopPadding(), bottom = 48.dp),
+            top = 76.dp + WindowInsets.statusBars.asPaddingValues().calculateTopPadding(), bottom = 48.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()),
         horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy((settings.size * .85f).dp)) {
         items(rows, key = { it.key }) { row ->

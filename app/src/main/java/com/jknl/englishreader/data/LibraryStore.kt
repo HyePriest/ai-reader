@@ -80,7 +80,7 @@ class LibraryStore(private val context: Context) {
         opened.remove(id)
         preferences.edit().remove("$id.chapter").remove("$id.paragraph").remove("$id.character").apply()
         runCatching { BookCovers(context).remove(id) }
-        ArticleChats(context).clear(id)
+        ChatStore(context).clear(id)
     }
 
     private fun importBytes(bytes: ByteArray, name: String): Book {
@@ -245,4 +245,12 @@ class ArticleChats(context: Context) {
         } catch (e: Exception) { atomic.failWrite(output); throw e }
     }
     fun clear(id: String) { file(id).delete() }
+    companion object {
+        /** The earlier whole-article conversation file, read once and replaced by ChatStore. */
+        fun legacy(directory: File, id: String): List<ReadingExchange> = runCatching {
+            val a = JSONArray(AtomicFile(File(directory, "$id.json")).openRead().bufferedReader().use { it.readText() })
+            (0 until a.length()).map { a.getJSONObject(it).let { e -> ReadingExchange(e.getString("q"), e.getString("a")) } }
+        }.getOrDefault(emptyList())
+        fun dropLegacy(directory: File, id: String) { AtomicFile(File(directory, "$id.json")).delete() }
+    }
 }

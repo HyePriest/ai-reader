@@ -195,8 +195,9 @@ class ScreenshotTest {
         compose.mainClock.autoAdvance = false
         compose.setContent {
             EnglishReaderTheme("paper") { Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                ReadingQuestionContent(q, listOf(ReadingExchange("全文大意是什么？", answer)), pending = "作者的态度是什么？", error = null,
-                    question = "", onQuestion = {}, onSend = {}, onStop = {}, onClear = {}, onReselect = {}, onAppend = {}, onClose = {})
+                ReadingQuestionContent(q, ChatThread.from(book.id, q).copy(exchanges = listOf(ReadingExchange("全文大意是什么？", answer))),
+                    pending = "作者的态度是什么？", error = null, highlight = -1,
+                    question = "", onQuestion = {}, onSend = {}, onStop = {}, onClear = {}, onUseArticle = {}, onReselect = {}, onAppend = {}, onClose = {})
             } }
         }
         shoot("ai-conversation")
@@ -208,5 +209,19 @@ class ScreenshotTest {
         "ABDAB".forEachIndexed { i, c -> answers.choose(text.id, 26 + i, c) }
         answers.setSubmitted(text.id, true)
         renderReader(text, "exam-no-key")
+    }
+
+    @Test fun aiPassage() {
+        assumeTrue(out != null)
+        val book = Articles.fromText("Title here\n\nThe biomedical engineer, based at the Italian Institute of Technology in Genoa, has devised an assortment of nanotechnologies.\n\nMore text.")
+        val q = ReadingQuestions.selection(book, listOf(PassageRange(0, 1, 0, 60)))
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            EnglishReaderTheme("paper") { Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                ReadingQuestionContent(q, ChatThread.from(book.id, q), pending = null, error = null, highlight = -1,
+                    question = "", onQuestion = {}, onSend = {}, onStop = {}, onClear = {}, onUseArticle = {}, onReselect = {}, onAppend = {}, onClose = {})
+            } }
+        }
+        shoot("ai-passage")
     }
 }

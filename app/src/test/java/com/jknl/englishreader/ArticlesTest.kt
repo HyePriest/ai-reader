@@ -56,17 +56,33 @@ class ArticlesTest {
         assertTrue(book.chapters.single().paragraphs.none { it.text.contains("Copyright") || it.text.contains("caption") })
     }
 
-    @Test fun articleQuestionsSendTheWholeArticle() {
-        val book = Articles.fromText("Title here\n\nFirst paragraph says one thing.\n\nThe LAST paragraph concludes.")
-        val passage = ReadingQuestions.selection(book, listOf(PassageRange(0, 1, 0, 5)))
-        assertTrue(passage.article.contains("The LAST paragraph concludes."))
+    @Test fun passageQuestionsSendOnlyNearbyParagraphsUnlessAsked() {
+        val book = Articles.fromText("Title here\n\nFirst paragraph says one thing.\n\nSecond paragraph adds more.\n\nThe LAST paragraph concludes.")
+        val passage = ReadingQuestions.selection(book, listOf(PassageRange(0, 2, 0, 6)))
+        assertFalse(passage.sendsArticle)
         val body = ReadingQuestions.body("m", passage, emptyList(), "Why?")
-        assertTrue(body.contains("全文") && body.contains("The LAST paragraph"))
+        assertTrue(body.contains("所在段落") && body.contains("First paragraph") && body.contains("Second paragraph"))
+        assertFalse(body.contains("The LAST paragraph"))
+        assertTrue(body.contains("生词"))
+        val full = ReadingQuestions.body("m", passage.copy(useArticle = true), emptyList(), "Why?")
+        assertTrue(full.contains("全文") && full.contains("The LAST paragraph"))
         val whole = ReadingQuestions.wholeArticle(book)
-        assertTrue(whole.wholeArticle)
+        assertTrue(whole.wholeArticle && whole.sendsArticle)
         val messages = JSONObject(ReadingQuestions.body("m", whole, emptyList(), "全文大意？")).getJSONArray("messages")
         assertTrue(messages.getJSONObject(0).getString("content").contains("考研"))
         assertFalse(messages.getJSONObject(1).getString("content").contains("重点选文"))
+    }
+
+    @Test fun chatThreadsRoundTripAndCacheRepeatedQuestions() {
+        val t = ChatThread(ChatThread.idFor(listOf(PassageRange(0, 1, 0, 5))), "a".repeat(24), listOf(PassageRange(0, 1, 0, 5)), "First", "Title · 第 1 段",
+            false, listOf(ReadingExchange("翻译这段", "这是译文。")), 1)
+        val back = ChatStore.decode(t.bookId, ChatStore.encode(listOf(t))).single()
+        assertEquals(t, back)
+        assertEquals(0, back.cached(" 翻译这段 "))
+        assertEquals(-1, back.cached("另一个问题"))
+        assertEquals(ChatThread.ARTICLE, ChatThread.idFor(emptyList()))
+        assertEquals(listOf(t to 0), ChatStore.search(listOf(t), "译文"))
+        assertEquals("这是译文。", ChatStore.snippet("这是译文。", "译文"))
     }
 
     @Test fun economistIssueSplitsIntoArticlesBySection() {
