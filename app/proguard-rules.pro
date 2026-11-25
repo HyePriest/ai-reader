@@ -11,3 +11,8 @@
 -dontwarn com.google.re2j.**
 # The native e-book importer is looked up from C by its JNI name.
 -keepclasseswithmembernames class * { native <methods>; }
+# kotlinx.coroutines finds its Android main dispatcher and exception handler by class name / ServiceLoader.
+-keep class kotlinx.coroutines.android.AndroidDispatcherFactory { *; }
+-keep class kotlinx.coroutines.android.AndroidExceptionPreHandler { *; }
+-keepnames class kotlinx.coroutines.internal.MainDispatcherFactory
+-keepnames class kotlinx.coroutines.CoroutineExceptionHandler

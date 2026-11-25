@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.runtime.*
 import com.jknl.englishreader.data.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.android.asCoroutineDispatcher
 
 /** Live state of one conversation. It outlives the chat screen, so leaving never loses an answer. */
 @Stable
@@ -21,7 +22,8 @@ internal class ChatSession(val book: Book, question: ReadingQuestion, thread: Ch
 }
 
 internal object ChatSessions {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    // Built from the main Looper directly instead of Dispatchers.Main, which is found by name at run time.
+    private val scope = CoroutineScope(SupervisorJob() + android.os.Handler(android.os.Looper.getMainLooper()).asCoroutineDispatcher().immediate)
     private val sessions = mutableStateMapOf<String, ChatSession>()
 
     fun open(context: Context, book: Book, question: ReadingQuestion): ChatSession {
