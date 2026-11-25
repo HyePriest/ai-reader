@@ -41,6 +41,10 @@ internal class PromptSettings(context: Context) {
     fun get(kind: String): List<String> = prefs.getString(kind, null)?.split('\n')?.filter { it.isNotBlank() } ?: ArticlePrompts.defaults(kind)
     fun set(kind: String, prompts: List<String>) { prefs.edit().putString(kind, prompts.joinToString("\n")).apply() }
     fun reset(kind: String) { prefs.edit().remove(kind).apply() }
+    /** Whether passage answers end with a vocabulary list. Visible as a switch in the chat menu. */
+    var vocab: Boolean
+        get() = prefs.getBoolean("vocab", true)
+        set(value) { prefs.edit().putBoolean("vocab", value).apply() }
 }
 
 internal object ArticlePrompts {
@@ -59,8 +63,7 @@ internal fun ReadingQuestionScreen(session: ChatSession, initialQuestion: String
     LaunchedEffect(session) { if (!initialQuestion.isNullOrBlank()) ChatSessions.send(context, session, initialQuestion) }
     DisposableEffect(session) { session.visible = true; session.unseen = false; onDispose { ChatSessions.close(session) } }
     var question by remember(session) { mutableStateOf("") }
-    ModalBottomSheet(onDismissRequest = onClose, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), sheetGesturesEnabled = false,
-        dragHandle = null, containerColor = MaterialTheme.colorScheme.background) {
+    DraggableSheet(onDismiss = onClose) {
     ReadingQuestionContent(session.question, session.thread, session.pending, session.error, session.highlight, question, { if (it.length <= 2000) question = it },
         onSend = { text -> ChatSessions.send(context, session, text); if (text == question.trim()) question = "" },
         onStop = { ChatSessions.stop(session) }, onClear = { ChatSessions.clear(context, session) },
@@ -78,6 +81,7 @@ internal fun ReadingQuestionContent(selection: ReadingQuestion, thread: ChatThre
     val promptSettings = remember { PromptSettings(context) }
     val kind = ArticlePrompts.kind(selection)
     var prompts by remember(kind) { mutableStateOf(promptSettings.get(kind)) }
+    var vocab by remember { mutableStateOf(promptSettings.vocab) }
     var editing by remember { mutableStateOf(false) }
     var historyOpen by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
@@ -90,8 +94,8 @@ internal fun ReadingQuestionContent(selection: ReadingQuestion, thread: ChatThre
     LaunchedEffect(history.size, pending) { if (history.isNotEmpty() || pending != null) list.animateScrollToItem(lead + history.size + if (pending != null) 1 else 0) }
     LaunchedEffect(highlight) { if (highlight >= 0) list.animateScrollToItem(lead + highlight) }
     Surface(Modifier.fillMaxWidth().testTag("reading-question-sheet"), color = MaterialTheme.colorScheme.background) {
-        Column(Modifier.fillMaxWidth().fillMaxHeight(.9f).imePadding()) {
-            Row(Modifier.padding(start = 20.dp, end = 4.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.fillMaxSize().imePadding()) {
+            Row(Modifier.padding(start = 20.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(if (selection.wholeArticle) "问 AI · 全文" else "问 AI · 选文", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                     Text(selection.location, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -100,10 +104,9 @@ internal fun ReadingQuestionContent(selection: ReadingQuestion, thread: ChatThre
                     GlyphButton("more", "更多", { menu = true })
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(16.dp),
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh) {
-                        if (article && !selection.wholeArticle) {
-                            MenuRow("doc", "参考全文", enabled = !busy, checked = selection.useArticle) { onUseArticle(!selection.useArticle) }
-                            HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                        }
+                        if (article && !selection.wholeArticle) MenuRow("doc", "参考全文", enabled = !busy, checked = selection.useArticle) { onUseArticle(!selection.useArticle) }
+                        if (!selection.wholeArticle) MenuRow("type", "回答附生词", checked = vocab) { vocab = !vocab; promptSettings.vocab = vocab }
+                        if (!selection.wholeArticle) HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
                         if (!selection.wholeArticle) {
                             MenuRow("select", "重新选文", enabled = !busy) { menu = false; onReselect() }
                             MenuRow("plus", "追加选文", enabled = !busy) { menu = false; onAppend() }
