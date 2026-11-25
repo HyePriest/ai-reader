@@ -87,6 +87,12 @@ fun ReaderApp(incoming: android.content.Intent? = null, onIncomingHandled: () ->
     var annotationUpdate by remember { mutableStateOf<Pair<Book, Book>?>(null) }
     var notebookOpen by rememberSaveable { mutableStateOf(false) }
     var tab by rememberSaveable { mutableStateOf("articles") }
+    var searchScreen by rememberSaveable { mutableStateOf(false) }
+    var pendingFind by remember { mutableStateOf<String?>(null) }
+    var pendingThread by remember { mutableStateOf<ChatThread?>(null) }
+    val marks = remember { ReadingMarks(context.applicationContext) }
+    var marksVersion by remember { mutableIntStateOf(0) }
+    LaunchedEffect(activeId) { activeId?.let { marks.markOpened(it) }; marksVersion++ }
     val lightPalette = settings.palette !in setOf("night", "ink", "black")
     SideEffect {
         val window = (context as? Activity)?.window
@@ -262,13 +268,18 @@ fun ReaderApp(incoming: android.content.Intent? = null, onIncomingHandled: () ->
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             val active = activeBook
             Box(Modifier.fillMaxSize()) {
-                if (active == null) Column(Modifier.fillMaxSize()) {
+                if (active == null && searchScreen) GlobalSearchScreen(books.filter { it.isArticle }, store, onBack = { searchScreen = false },
+                    onOpen = { a, find -> pendingFind = find; pendingThread = null; activeId = a.id; activeBook = store.cached(a.id) },
+                    onOpenThread = { a, t -> pendingFind = null; pendingThread = t; activeId = a.id; activeBook = store.cached(a.id) })
+                else if (active == null) Column(Modifier.fillMaxSize()) {
                     Box(Modifier.weight(1f)) {
                         if (tab == "articles") shelfState.SaveableStateProvider("articles") {
                             ArticleHome(books.filter { it.isArticle }, store, onRead = { activeId = it.id; activeBook = store.cached(it.id) },
                                 onOpenText = ::openText, onImport = { articleImporter.launch(arrayOf("*/*")) }, onSettings = { settingsOpen = true },
                                 onNotebook = { notebookOpen = true }, onDelete = ::delete,
-                                titleStatus = titleStatus, onRetryTitles = { titleStatus = null; titleRetry++ })
+                                titleStatus = titleStatus, onRetryTitles = { titleStatus = null; titleRetry++ },
+                                marks = marks, marksVersion = marksVersion, onToggleFavorite = { marks.setFavorite(it.id, !marks.favorite(it.id)); marksVersion++ },
+                                onSearch = { searchScreen = true })
                         } else shelfState.SaveableStateProvider("shelf") {
                             StarShelf(books.filterNot { it.isArticle }, store, shelfLoading, notebookOpen,
                                 { activeId = it.id; activeBook = store.cached(it.id) }, { if (!shelfLoading) importInfo = true }, { settingsOpen = true }, { notebookOpen = true })
@@ -282,7 +293,8 @@ fun ReaderApp(incoming: android.content.Intent? = null, onIncomingHandled: () ->
                     }
                 }
                 else key(active.id) {
-                    Reader(active, store, settings, onBack = { activeId = null; activeBook = null }, onSettings = { settingsOpen = true }, trackingEnabled = !settingsOpen,
+                    Reader(active, store, settings, onBack = { activeId = null; activeBook = null; pendingFind = null; pendingThread = null },
+                        onSettings = { settingsOpen = true }, trackingEnabled = !settingsOpen, initialFind = pendingFind, initialThread = pendingThread,
                         onUpdate = { updated ->
                             withContext(Dispatchers.IO) { store.saveWithUndo(active, updated) }
                             activeBook = updated

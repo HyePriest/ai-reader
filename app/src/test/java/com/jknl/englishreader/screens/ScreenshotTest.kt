@@ -93,9 +93,11 @@ class ScreenshotTest {
         store.save(single)
         val shelf = (saved + single).map { ShelfBook.from(it) }
         compose.mainClock.autoAdvance = false
+        val marks = ReadingMarks(context)
+        marks.markOpened(saved[3].id, 5); marks.markOpened(saved[5].id, 9); marks.setFavorite(saved[5].id, true)
         compose.setContent {
             EnglishReaderTheme("paper") { Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                ArticleHome(shelf, store, onRead = {}, onOpenText = {}, onImport = {}, onSettings = {}, onNotebook = {}, onDelete = {})
+                ArticleHome(shelf, store, marks = marks, onRead = {}, onOpenText = {}, onImport = {}, onSettings = {}, onNotebook = {}, onDelete = {})
             } }
         }
         shoot("home")
@@ -223,5 +225,33 @@ class ScreenshotTest {
             } }
         }
         shoot("ai-passage")
+    }
+
+    @Test fun cartoon() {
+        assumeTrue(out != null)
+        val imported = issue()
+        val store = LibraryStore(context)
+        val a = imported.articles.first { it.title.startsWith("Cartoon") }
+        store.save(a); imported.images[a.id]?.let { store.saveImage(a.id, it) }
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            EnglishReaderTheme("paper") { Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                Reader(a, store, ReaderSettings(), onBack = {}, onSettings = {}, onUpdate = {})
+            } }
+        }
+        shoot("cartoon")
+    }
+
+    @Test fun findBar() {
+        assumeTrue(out != null)
+        val book = article()
+        val store = LibraryStore(context)
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            EnglishReaderTheme("paper") { Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                Reader(book, store, ReaderSettings(), onBack = {}, onSettings = {}, onUpdate = {}, initialFind = "the")
+            } }
+        }
+        shoot("find")
     }
 }

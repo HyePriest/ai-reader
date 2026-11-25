@@ -42,3 +42,13 @@ fun readingDuration(millis: Long): String {
         else -> "${seconds / 3600} 小时 ${seconds / 60 % 60} 分钟"
     }
 }
+
+/** When each article or book was last opened, and which are starred. Kept on this device only. */
+class ReadingMarks(context: Context) {
+    private val prefs = context.getSharedPreferences("reading-marks", Context.MODE_PRIVATE)
+    fun opened(id: String) = prefs.getLong("opened.$id", 0L)
+    fun markOpened(id: String, at: Long = System.currentTimeMillis()) { prefs.edit().putLong("opened.$id", at).apply() }
+    fun favorite(id: String) = prefs.getBoolean("star.$id", false)
+    fun setFavorite(id: String, value: Boolean) { prefs.edit().apply { if (value) putBoolean("star.$id", true) else remove("star.$id") }.apply() }
+    fun forget(id: String) { prefs.edit().remove("opened.$id").remove("star.$id").apply() }
+}

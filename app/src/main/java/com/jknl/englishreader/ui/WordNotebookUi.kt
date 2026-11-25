@@ -3,6 +3,7 @@ package com.jknl.englishreader.ui
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -88,21 +89,21 @@ internal fun WordNotebookDialog(notebook: WordNotebook? = null, onDismiss: () ->
     }
     Dialog(onDismissRequest = { if (selected != null) selected = null else onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize().safeDrawingPadding().testTag("word-notebook"), color = MaterialTheme.colorScheme.background) {
-            Column(Modifier.padding(horizontal = 22.dp, vertical = 12.dp)) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    if (selected != null) GlyphButton("back", "返回词条列表", { selected = null })
-                    Text(selected?.query?.word ?: "生词本", fontSize = 24.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    GlyphButton("back", if (selected != null) "返回词条列表" else "关闭生词本", { if (selected != null) selected = null else onDismiss() })
+                    Text(if (selected != null) "" else "生词本", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f), maxLines = 1)
                     if (selected == null) TextButton(enabled = !loading && error == null && data.saved.isNotEmpty(), onClick = { export.launch("ai-reader-vocabulary.json") }) { Text("导出") }
-                    GlyphButton("close", "关闭生词本", onDismiss)
                 }
                 if (selected == null) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        FilterChip(selected = !recent, onClick = { recent = false }, label = { Text("生词本 ${data.saved.map { it.lemmaKey }.distinct().size}") })
+                    Row(Modifier.padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = !recent, onClick = { recent = false }, label = { Text("收藏 ${data.saved.map { it.lemmaKey }.distinct().size}") })
                         FilterChip(selected = recent, onClick = { recent = true }, label = { Text("查词记录 ${data.recent.size}") })
                     }
-                    Text(if (recent) "最多保留 5,000 条语境记录。同一处重复查询合并，离线可读。" else "按单词归并，释义在前，原句与出处在后。收藏独立保留。", fontSize = 12.sp, lineHeight = 20.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(search, { search = it }, label = { Text("搜索单词、释义或原句") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(search, { search = it }, placeholder = { Text("搜索单词、释义或原句") }, singleLine = true,
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(10.dp))
                     val records = remember(data, recent, search) {
                         (if (recent) data.recent else data.saved).filter { r -> search.isBlank() ||
                             r.explanation.lemma.contains(search, true) || r.query.sentence.contains(search, true) ||
@@ -113,54 +114,72 @@ internal fun WordNotebookDialog(notebook: WordNotebook? = null, onDismiss: () ->
                         loading -> CircularProgressIndicator()
                         error != null -> Text(error!!)
                         records.isEmpty() -> Text(if (recent) "还没有查词记录。成功查词后自动保留在这里。" else "长按查词后，点面板顶部「加入生词本」。", modifier = Modifier.padding(top = 28.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        else -> LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        else -> LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
                             items(groups, key = { it.first().id }) { group ->
                                 val record = group.first()
-                                ListItem(headlineContent = { Text(record.explanation.lemma, fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif, fontSize = 21.sp) },
-                                    supportingContent = { Column {
-                                        Text(group.map { it.explanation.contextMeaning }.distinct().joinToString("；"), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                        if (!recent) Text("${group.size} 处原句", fontSize = 11.sp)
-                                        Text("${record.goal.title} · ${StudyLevels.display(record.explanation.wordAdvice.decision)} · ${record.origin.bookTitle}", fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    } }, modifier = Modifier.clickable { selected = record })
+                                Card(Modifier.fillMaxWidth().clickable { selected = record }, shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                            Text(record.explanation.lemma, fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                                            Text("  " + record.explanation.pos, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f), maxLines = 1)
+                                            StudyBadge(StudyLevels.display(record.explanation.wordAdvice.decision))
+                                        }
+                                        Text(group.map { it.explanation.contextMeaning }.distinct().joinToString("；"), fontSize = 14.sp, lineHeight = 20.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        Text(listOfNotNull(if (!recent && group.size > 1) "${group.size} 处原句" else null, record.origin.bookTitle).joinToString(" · "),
+                                            fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
                             }
                         }
                     }
                 } else {
                     val record = selected!!
                     val saved = data.saved.any { it.id == record.id }
-                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                        Text("${record.goal.title} · 已保存的释义", fontSize = 12.sp, modifier = Modifier.weight(1f))
-                        if (saved) TextButton(enabled = !saving && !refreshing, onClick = { removing = true }) { Text("移出生词本") }
-                        else Button(enabled = !saving && !refreshing, onClick = { changeRecord(false) }) { Text("加入生词本") }
-                    }
-                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("本条来自 ${record.model} · ${record.goal.title}${if (record.promptVersion != WordPrompt.VERSION) " · 历史分析" else ""}",
-                            fontSize = 12.sp, lineHeight = 20.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        TextButton(enabled = !refreshing && !saving, onClick = { refresh(record) }) {
-                            Text("重新分析 · ${config.model}")
+                    val contexts = if (recent) listOf(record) else data.saved.filter { it.lemmaKey == record.lemmaKey }.ifEmpty { listOf(record) }
+                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 6.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.Bottom) {
+                            Text(record.explanation.lemma, fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif, fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
+                            Text("  " + record.explanation.pos, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 6.dp))
                         }
-                        Text("点击后将本条单词和原句发送给 DeepSeek，按当前「${config.goal.title}」目标更新，会产生 API 用量。", fontSize = 11.sp, lineHeight = 18.sp)
-                        Text("主要释义", fontWeight = FontWeight.SemiBold)
-                        val contexts = if (recent) listOf(record) else data.saved.filter { it.lemmaKey == record.lemmaKey }.ifEmpty { listOf(record) }
-                        contexts.flatMap { it.explanation.senses }.distinctBy { it.pos to it.meaning }.forEach { sense ->
-                            Text("${sense.pos} · ${sense.meaning}", fontSize = 16.sp, lineHeight = 25.sp)
-                            if (sense.usage.isNotBlank()) Text(sense.usage, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            if (saved) OutlinedButton(enabled = !saving && !refreshing, onClick = { removing = true }) { Text("移出收藏") }
+                            else Button(enabled = !saving && !refreshing, onClick = { changeRecord(false) }) { Text("加入收藏") }
+                            TextButton(enabled = !refreshing && !saving, onClick = { refresh(record) }) { Text("重新分析") }
                         }
-                        HorizontalDivider()
-                        Text("这个词 · ${StudyLevels.display(record.explanation.wordAdvice.decision)}", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-                        Text(record.explanation.wordAdvice.reason, fontSize = 14.sp, lineHeight = 22.sp)
-                        Text("遇到这个词的原句", fontWeight = FontWeight.SemiBold)
-                        contexts.forEach { item ->
-                            Text(item.query.sentence, fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif, fontSize = 17.sp, lineHeight = 26.sp)
-                            Text("此处：${item.explanation.contextMeaning}", fontWeight = FontWeight.SemiBold)
-                            Text(item.explanation.contextExplanation, fontSize = 14.sp, lineHeight = 22.sp)
-                            Text("此义 · ${StudyLevels.display(item.explanation.senseAdvice.decision)}：${item.explanation.senseAdvice.reason}", fontSize = 13.sp, lineHeight = 21.sp)
-                            if (item.explanation.phrase.isNotBlank()) Text(item.explanation.phrase, fontSize = 13.sp)
-                            Text("${item.origin.bookTitle}\n${item.origin.chapterTitle}", fontSize = 12.sp, lineHeight = 20.sp)
-                            Text("查过 ${item.lookupCount} 次", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            if (contexts.size > 1) TextButton(enabled = !refreshing && !saving, onClick = { selected = item }) { Text(if (item.identity == record.identity) "当前管理的语境" else "管理此处释义与收藏") }
-                            HorizontalDivider()
+                        NoteSection("主要释义") {
+                            contexts.flatMap { it.explanation.senses }.distinctBy { it.pos to it.meaning }.forEach { sense ->
+                                Row {
+                                    Text(sense.pos, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(64.dp).padding(top = 2.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(sense.meaning, fontSize = 15.sp, lineHeight = 22.sp)
+                                        if (sense.usage.isNotBlank()) Text(sense.usage, fontSize = 12.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
                         }
+                        NoteSection("要不要背") {
+                            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) { StudyBadge(StudyLevels.display(record.explanation.wordAdvice.decision)) }
+                            Text(record.explanation.wordAdvice.reason, fontSize = 14.sp, lineHeight = 22.sp)
+                        }
+                        NoteSection("遇到它的原句") {
+                            contexts.forEach { item ->
+                                Row(Modifier.height(IntrinsicSize.Min)) {
+                                    Box(Modifier.width(3.dp).fillMaxHeight().background(MaterialTheme.colorScheme.primary, androidx.compose.foundation.shape.RoundedCornerShape(2.dp)))
+                                    Column(Modifier.padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(item.query.sentence, fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif, fontSize = 16.sp, lineHeight = 24.sp)
+                                        Text("此处：${item.explanation.contextMeaning}", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                        Text(item.explanation.contextExplanation, fontSize = 13.sp, lineHeight = 20.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        if (item.explanation.phrase.isNotBlank()) Text(item.explanation.phrase, fontSize = 13.sp)
+                                        Text("${item.origin.bookTitle} · 查过 ${item.lookupCount} 次", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        if (contexts.size > 1 && item.identity != record.identity) TextButton(enabled = !refreshing && !saving, onClick = { selected = item },
+                                            contentPadding = PaddingValues(0.dp)) { Text("管理这一处", fontSize = 12.sp) }
+                                    }
+                                }
+                            }
+                        }
+                        Text("${record.model} · ${record.goal.title}${if (record.promptVersion != WordPrompt.VERSION) " · 历史分析" else ""} · 重新分析会把单词和原句发给 DeepSeek",
+                            fontSize = 11.sp, lineHeight = 17.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 if (refreshing) {
@@ -178,4 +197,22 @@ internal fun WordNotebookDialog(notebook: WordNotebook? = null, onDismiss: () ->
     }
 }
 
+@Composable
+private fun NoteSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+            content()
+        }
+    }
+}
 
+@Composable
+private fun StudyBadge(label: String) {
+    val strong = label.contains("需要")
+    Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
+        color = if (strong) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest) {
+        Text(label, fontSize = 11.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+            color = if (strong) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}

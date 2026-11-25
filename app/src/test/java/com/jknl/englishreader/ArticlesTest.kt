@@ -112,7 +112,12 @@ class ArticlesTest {
         println("articles=${articles.size} sections=${articles.map { it.section }.distinct()}")
         articles.take(3).forEach { println("${it.section} | ${it.title} | ${it.wordCount} words | ${it.chapters.single().paragraphs[1].text.take(80)}") }
         assertTrue(articles.size > 40)
-        assertTrue(articles.all { it.wordCount >= 120 })
+        val imported = EconomistIssue.readWithImages(File(path).readBytes())!!
+        // Short items are only kept when they lead with a picture, like the weekly cartoon.
+        assertTrue(articles.filter { it.wordCount < 120 }.all { it.id in imported.images })
+        val cartoon = articles.first { it.title.startsWith("Cartoon") }
+        val links = cartoon.chapters.single().paragraphs.filterNot { it.heading }.map { it.text }
+        assertTrue(links.toString(), "The incredible shrinking legacy of Donald J. Trump" in links && "Iran is functioning without a supreme leader" in links)
         assertEquals(articles.size, articles.map { it.id }.distinct().size)
         val images = EconomistIssue.readWithImages(File(path).readBytes())!!.images
         println("images=${images.size} first=${images.values.first().size} bytes")
@@ -158,5 +163,25 @@ class ArticlesTest {
             files.forEach { (name, text) -> zip.putNextEntry(ZipEntry(name)); zip.write(text.toByteArray()) }
         }
         return out.toByteArray()
+    }
+}
+
+class ImportExtrasTest {
+    @Test fun markdownArticlesLoseTheirMarkers() {
+        val text = Articles.stripMarkdown("# Big title\n\nSome **bold** and *italic* with a [link](https://x.y) and `code`.\n\n![pic](a.png)\n---\n> quoted line")
+        assertEquals("Big title\n\nSome bold and italic with a link and code.\n\n\n\nquoted line", text)
+        val book = Articles.fromText(text)
+        assertEquals("Big title", book.title)
+    }
+
+    @Test fun librarySearchRanksTitleMatchesFirst() {
+        val a = Articles.fromText("Cheap nails changed the world\n\nNothing about it here.")
+        val b = Articles.fromText("Another story\n\nNails, nails and more nails in the text.")
+        val hits = com.jknl.englishreader.ui.LibrarySearch.rank(listOfNotNull(
+            com.jknl.englishreader.ui.LibrarySearch.article(ShelfBook.from(b), b, "nails"),
+            com.jknl.englishreader.ui.LibrarySearch.article(ShelfBook.from(a), a, "nails")))
+        assertEquals(listOf(a.id, b.id), hits.map { it.article.id })
+        assertEquals(3, hits[1].count)
+        assertNull(com.jknl.englishreader.ui.LibrarySearch.article(ShelfBook.from(a), a, "zebra"))
     }
 }

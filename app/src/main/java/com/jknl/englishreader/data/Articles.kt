@@ -60,6 +60,14 @@ object Articles {
     fun imageUrl(html: String, url: String): String? = Jsoup.parse(html, url).selectFirst("meta[property=og:image], meta[name=twitter:image]")
         ?.absUrl("content")?.takeIf { it.startsWith("http") }
 
+    /** Plain reading text from a Markdown article: markers, links and images are removed. */
+    fun stripMarkdown(raw: String): String = raw.replace(Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL), "").lines().joinToString("\n") { line ->
+        line.replace(Regex("^\\s{0,3}#{1,6}\\s+"), "").replace(Regex("^\\s{0,3}>\\s?"), "")
+            .replace(Regex("!\\[[^\\]]*]\\([^)]*\\)"), "").replace(Regex("\\[([^\\]]+)]\\([^)]*\\)"), "$1")
+            .replace(Regex("(\\*\\*|__)(.+?)\\1"), "$2").replace(Regex("(?<![*\\w])\\*(?!\\s)(.+?)(?<!\\s)\\*(?!\\*)"), "$1")
+            .replace(Regex("`([^`]+)`"), "$1").let { if (it.trim().matches(Regex("([-*_])(\\s*\\1){2,}"))) "" else it }
+    }
+
     fun firstUrl(text: String): String? = Regex("https?://[^\\s<>\"'“”]+").find(text)?.value?.trimEnd('.', ',', ')', '）', '。')
 
     /** Shared text that is nothing but a link (maybe with a page title around it). */
@@ -196,13 +204,21 @@ object EconomistIssue {
                         val copy = e.clone()
                         copy.select("img").remove()
                         copy.select("span.te_section_title").forEach { if (it.text().trim() == "■") it.remove() }
-                        val text = copy.text().replace(' ', ' ').replace(Regex("\\s+"), " ").trim().removeSuffix("■").trim()
-                        if (text.isNotEmpty()) body += text
+                        // Separate items: line breaks, and runs of adjacent links (the cartoon's related articles).
+                        copy.select("br").forEach { it.replaceWith(org.jsoup.nodes.TextNode("\u0001")) }
+                        if (copy.select("> a").size >= 2) copy.childNodes().toList().drop(1).forEach { node ->
+                            val previous = node.previousSibling()
+                            if (previous is org.jsoup.nodes.Element && previous.normalName() == "a") node.before(org.jsoup.nodes.TextNode("\u0001"))
+                        }
+                        copy.text().split('\u0001').map { it.replace('\u00a0', ' ').replace(Regex("\\s+"), " ").trim().removeSuffix("■").trim() }
+                            .filter { it.isNotEmpty() }.forEach { body += it }
                     }
                 }
             }
         }
-        if (!started || body.sumOf { TextLocator.wordCount(it) } < MIN_WORDS) return null
+        // Short pieces are kept when they lead with a picture, such as the weekly cartoon.
+        val words = body.sumOf { TextLocator.wordCount(it) }
+        if (!started || (words < MIN_WORDS && (image == null || words < 3))) return null
         val heading = title.ifBlank { label }.ifBlank { return null }
         return Articles.build(heading, body, now, Articles.ECONOMIST, author = listOf("The Economist", date).filter { it.isNotBlank() }.joinToString(" · "),
             collection = issue, section = section, subtitle = rubric) to image

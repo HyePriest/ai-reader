@@ -37,8 +37,33 @@ import kotlinx.coroutines.withContext
 @Composable
 internal fun ArticleHome(articles: List<ShelfBook>, store: LibraryStore, onRead: (ShelfBook) -> Unit, onOpenText: (String) -> Unit,
     onImport: () -> Unit, onSettings: () -> Unit, onNotebook: () -> Unit, onDelete: (List<ShelfBook>) -> Unit,
-    titleStatus: String? = null, onRetryTitles: () -> Unit = {}) {
+    titleStatus: String? = null, onRetryTitles: () -> Unit = {},
+    marks: ReadingMarks? = null, marksVersion: Int = 0, onToggleFavorite: (ShelfBook) -> Unit = {}, onSearch: () -> Unit = {}) {
+    val actions = remember(marks, marksVersion) { marks?.let { m -> ArticleActions({ m.favorite(it) }, onToggleFavorite) } }
+    CompositionLocalProvider(LocalArticleActions provides actions) {
+        ArticleHomeContent(articles, store, onRead, onOpenText, onImport, onSettings, onNotebook, onDelete, titleStatus, onRetryTitles, marks, marksVersion, onSearch)
+    }
+}
+
+/** Favourite state and toggle, shared by every article card without threading parameters through. */
+internal class ArticleActions(val isFavorite: (String) -> Boolean, val toggle: (ShelfBook) -> Unit)
+internal val LocalArticleActions = compositionLocalOf<ArticleActions?> { null }
+
+private const val RECENT = "\u0000recent"
+private const val FAVORITES = "\u0000favorites"
+
+@Composable
+private fun ArticleHomeContent(articles: List<ShelfBook>, store: LibraryStore, onRead: (ShelfBook) -> Unit, onOpenText: (String) -> Unit,
+    onImport: () -> Unit, onSettings: () -> Unit, onNotebook: () -> Unit, onDelete: (List<ShelfBook>) -> Unit,
+    titleStatus: String?, onRetryTitles: () -> Unit, marks: ReadingMarks?, marksVersion: Int, onSearch: () -> Unit) {
     var openIssue by rememberSaveable { mutableStateOf<String?>(null) }
+    val recent = remember(articles, marksVersion) { marks?.let { m -> articles.filter { m.opened(it.id) > 0 }.sortedByDescending { m.opened(it.id) } }.orEmpty() }
+    val favorites = remember(articles, marksVersion) { marks?.let { m -> articles.filter { m.favorite(it.id) }.sortedByDescending { m.opened(it.id) } }.orEmpty() }
+    if (openIssue == RECENT || openIssue == FAVORITES) {
+        ArticleListScreen(if (openIssue == RECENT) "最近阅读" else "收藏", if (openIssue == RECENT) recent else favorites, store,
+            onBack = { openIssue = null }, onRead = onRead, onDelete = onDelete)
+        return
+    }
     val groups = remember(articles) { articles.filter { it.collection.isNotBlank() }.groupBy { it.collection }.toList().sortedByDescending { it.first } }
     val exams = groups.filter { (_, list) -> list.first().sourceFormat == ExamPaper.FORMAT }
     val issues = groups.filter { (_, list) -> list.first().sourceFormat != ExamPaper.FORMAT }
@@ -61,6 +86,7 @@ internal fun ArticleHome(articles: List<ShelfBook>, store: LibraryStore, onRead:
                     Text("读一篇", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, fontFamily = com.jknl.englishreader.ui.theme.ReadingSerif)
                     Text("粘贴、分享或导入，打开就读", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                GlyphButton("search", "搜索文章和问 AI 记录", onSearch)
                 TextButton(onClick = onNotebook, modifier = Modifier.testTag("article-vocabulary")) { Text("生词本") }
                 GlyphButton("settings", "阅读设置", onSettings)
             }
@@ -91,6 +117,17 @@ internal fun ArticleHome(articles: List<ShelfBook>, store: LibraryStore, onRead:
                     Text(if (titleStatus.contains("API Key")) "去设置" else "重试")
                 }
             }
+        }
+        item(key = "shortcuts") {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AssistChip(onClick = { openIssue = RECENT }, label = { Text("最近阅读 ${recent.size}") }, modifier = Modifier.testTag("open-recent"))
+                AssistChip(onClick = { openIssue = FAVORITES }, label = { Text("收藏 ${favorites.size}") }, modifier = Modifier.testTag("open-favorites"))
+            }
+        }
+        val continuing = recent.filter { it.progress(store.position(it)) < .95f }.take(2)
+        if (continuing.isNotEmpty()) item(key = "continue-title") { SectionLabel("继续阅读") }
+        items(continuing, key = { "continue-${it.id}" }) { article ->
+            ArticleCard(article, store, onClick = { onRead(article) }, onLongClick = { confirmDelete = article.title to listOf(article) })
         }
         if (exams.isNotEmpty()) item(key = "exams-title") { SectionLabel("考研真题") }
         items(exams, key = { "exam-${it.first}" }) { (name, list) ->
@@ -196,7 +233,10 @@ internal fun IssueScreen(name: String, articles: List<ShelfBook>, store: Library
 @Composable
 private fun ArticleCard(article: ShelfBook, store: LibraryStore, onClick: () -> Unit, onLongClick: () -> Unit) {
     val progress = remember(article) { article.progress(store.position(article)) }
-    Card(Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick).testTag("article-${article.id}"), shape = RoundedCornerShape(14.dp),
+    var menu by remember { mutableStateOf(false) }
+    Box {
+    ArticleMenu(article, menu, onDismiss = { menu = false }, onDelete = onLongClick)
+    Card(Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = { menu = true }).testTag("article-${article.id}"), shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), elevation = CardDefaults.cardElevation(1.dp)) {
         Row(Modifier.padding(12.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -208,6 +248,43 @@ private fun ArticleCard(article: ShelfBook, store: LibraryStore, onClick: () -> 
             Thumbnail(listOf(article.id), 96.dp, 72.dp, Modifier.padding(start = 10.dp))
         }
     }
+    }
+}
+
+/** Long-press actions on an article: star it, or delete it (rarely needed, so tucked away here). */
+@Composable
+private fun ArticleMenu(article: ShelfBook, open: Boolean, onDismiss: () -> Unit, onDelete: () -> Unit) {
+    val actions = LocalArticleActions.current
+    DropdownMenu(expanded = open, onDismissRequest = onDismiss) {
+        if (actions != null) DropdownMenuItem(text = { Text(if (actions.isFavorite(article.id)) "取消收藏" else "收藏") },
+            onClick = { onDismiss(); actions.toggle(article) })
+        DropdownMenuItem(text = { Text("删除") }, onClick = { onDismiss(); onDelete() })
+    }
+}
+
+@Composable
+private fun ArticleListScreen(title: String, articles: List<ShelfBook>, store: LibraryStore, onBack: () -> Unit, onRead: (ShelfBook) -> Unit,
+    onDelete: (List<ShelfBook>) -> Unit) {
+    BackHandler(onBack = onBack)
+    var confirmDelete by remember { mutableStateOf<ShelfBook?>(null) }
+    LazyColumn(Modifier.fillMaxSize().testTag("article-list-$title"), contentPadding = PaddingValues(
+        top = WindowInsets.safeDrawing.asPaddingValues().calculateTopPadding() + 4.dp, bottom = 24.dp, start = 12.dp, end = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item(key = "header") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                GlyphButton("back", "返回", onBack)
+                Text(title, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        if (articles.isEmpty()) item(key = "empty") {
+            Text(if (title == "收藏") "长按文章卡片，选「收藏」。" else "还没有读过文章。", fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp))
+        }
+        items(articles, key = { it.id }) { article ->
+            ArticleCard(article, store, onClick = { onRead(article) }, onLongClick = { confirmDelete = article })
+        }
+    }
+    confirmDelete?.let { a -> DeleteDialog(a.title, 1, onDismiss = { confirmDelete = null }) { onDelete(listOf(a)); confirmDelete = null } }
 }
 
 @Composable
@@ -236,7 +313,8 @@ private fun ArticleTitles(article: ShelfBook, large: Boolean = false) {
 
 @Composable
 private fun ArticleTags(article: ShelfBook, progress: Float) {
-    val tags = listOfNotNull(article.countLabel,
+    val starred = LocalArticleActions.current?.isFavorite?.invoke(article.id) == true
+    val tags = listOfNotNull(if (starred) "★ 收藏" else null, article.countLabel,
         when { progress > .9f -> "已读完"; progress > .02f -> "读到 ${(progress * 100).toInt()}%"; else -> null },
         if (Articles.examTopic(article.section) && Articles.examLength(article.wordCount)) "考研常见题材" else null,
         if (article.collection.isBlank()) article.author else null)

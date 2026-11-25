@@ -14,6 +14,8 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.focus.focusRequester
 import com.jknl.englishreader.data.Book
 import com.jknl.englishreader.data.PassageRange
 import kotlinx.coroutines.Dispatchers
@@ -22,8 +24,8 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 @Composable
-internal fun ReaderSearch(book: Book, rows: List<ReadingRow>, onDismiss: () -> Unit, onPick: (PassageRange) -> Unit) {
-    var query by rememberSaveable { mutableStateOf("") }
+internal fun ReaderSearch(book: Book, rows: List<ReadingRow>, onDismiss: () -> Unit, onPick: (PassageRange) -> Unit, initialQuery: String = "") {
+    var query by rememberSaveable { mutableStateOf(initialQuery) }
     var hits by remember { mutableStateOf(emptyList<PassageRange>()) }
     var searching by remember { mutableStateOf(false) }
     var truncated by remember { mutableStateOf(false) }
@@ -53,7 +55,7 @@ internal fun ReaderSearch(book: Book, rows: List<ReadingRow>, onDismiss: () -> U
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(.9f).padding(horizontal = 20.dp)) {
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Text("搜索本书", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Text(if (book.isArticle) "搜索结果" else "搜索本书", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 TextButton(onClick = onDismiss) { Text("关闭") }
             }
             OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("搜索正文（中文或英文）") },
@@ -87,6 +89,56 @@ internal fun ReaderSearch(book: Book, rows: List<ReadingRow>, onDismiss: () -> U
                     HorizontalDivider()
                 }
             }
+        }
+    }
+}
+
+/** All matches of [term] in reading order, capped so a very common word stays responsive. */
+internal fun findInRows(rows: List<ReadingRow>, term: String, limit: Int = 500): List<PassageRange> {
+    val t = term.trim()
+    if (t.isEmpty()) return emptyList()
+    val results = mutableListOf<PassageRange>()
+    for (row in rows) {
+        var offset = 0
+        val text = row.paragraph.text
+        while (offset < text.length) {
+            val start = text.indexOf(t, offset, ignoreCase = true)
+            if (start < 0) break
+            results += PassageRange(row.chapter, row.paragraphIndex, start, start + t.length)
+            if (results.size >= limit) return results
+            offset = start + t.length
+        }
+    }
+    return results
+}
+
+/** Find-in-page bar: every match is highlighted in the text; arrows step through them. */
+@Composable
+internal fun FindBar(query: String, onQuery: (String) -> Unit, index: Int, count: Int, searching: Boolean,
+    onPrevious: () -> Unit, onNext: () -> Unit, onList: () -> Unit, onClose: () -> Unit) {
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    Surface(color = MaterialTheme.colorScheme.background, shadowElevation = 2.dp) {
+        Row(Modifier.fillMaxWidth().statusBarsPadding().heightIn(min = 60.dp).padding(horizontal = 6.dp).testTag("find-bar"),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            GlyphButton("close", "关闭搜索", onClose)
+            Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 14.dp)) {
+                    androidx.compose.foundation.text.BasicTextField(query, onQuery, singleLine = true,
+                        textStyle = LocalTextStyle.current.copy(fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { onNext() }),
+                        modifier = Modifier.weight(1f).padding(vertical = 10.dp).focusRequester(focus).testTag("reader-search-input"),
+                        decorationBox = { inner -> if (query.isEmpty()) Text("在本文中查找", fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant); inner() })
+                    Text(when { query.isBlank() -> ""; searching -> "…"; count == 0 -> "无结果"; else -> "${index + 1}/$count" },
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            TextButton(onClick = onPrevious, enabled = count > 0, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("↑", fontSize = 18.sp) }
+            TextButton(onClick = onNext, enabled = count > 0, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("↓", fontSize = 18.sp) }
+            TextButton(onClick = onList, enabled = count > 0, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("列表", fontSize = 13.sp) }
         }
     }
 }

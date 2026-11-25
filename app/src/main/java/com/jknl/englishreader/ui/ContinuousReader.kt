@@ -61,7 +61,8 @@ internal data class ReadingRow(val chapter: Int, val paragraphIndex: Int, val pa
 
 @Composable
 internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, onBack: () -> Unit,
-    onSettings: () -> Unit, trackingEnabled: Boolean = true, onUpdate: suspend (Book) -> Unit, initialExamOpen: Boolean = false) {
+    onSettings: () -> Unit, trackingEnabled: Boolean = true, onUpdate: suspend (Book) -> Unit, initialExamOpen: Boolean = false,
+    initialFind: String? = null, initialThread: ChatThread? = null) {
     val context = LocalContext.current
     val repository = remember { WordRepository(context.applicationContext) }
     val notebook = remember { WordNotebook(context.applicationContext) }
@@ -77,8 +78,13 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
     var chapterIndex by remember { mutableIntStateOf(initial.chapter) }
     var chapterProgress by remember { mutableFloatStateOf(0f) }
     var contents by rememberSaveable { mutableStateOf(false) }
-    var searchOpen by rememberSaveable { mutableStateOf(false) }
+    var searchOpen by rememberSaveable { mutableStateOf(!initialFind.isNullOrBlank()) }
     var searchHit by remember { mutableStateOf<PassageRange?>(null) }
+    var findQuery by rememberSaveable { mutableStateOf(initialFind.orEmpty()) }
+    var findHits by remember { mutableStateOf(emptyList<PassageRange>()) }
+    var findIndex by remember { mutableIntStateOf(0) }
+    var findSearching by remember { mutableStateOf(false) }
+    var findList by remember { mutableStateOf(false) }
     var searchJump by remember { mutableStateOf<ReadingPosition?>(null) }
     var pdfOriginal by rememberSaveable { mutableStateOf(false) }
     var chrome by rememberSaveable { mutableStateOf(true) }
@@ -102,11 +108,31 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
     var examOpen by rememberSaveable { mutableStateOf(initialExamOpen) }
     val exam = remember(book.id) { if (book.questions.isNotEmpty()) ExamState(book, ExamAnswers(context.applicationContext)) else null }
     var chat by remember { mutableStateOf<ChatSession?>(null) }
+    LaunchedEffect(initialThread) {
+        val t = initialThread ?: return@LaunchedEffect
+        val q = if (t.whole) runCatching { ReadingQuestions.wholeArticle(book) }.getOrNull() else runCatching { ReadingQuestions.selection(book, t.passages) }.getOrNull()
+        if (q != null) { aiRanges = q.passages; aiQuestion = q; chat = ChatSessions.open(context, book, q) }
+    }
     fun askArticle(question: ReadingQuestion, initial: String? = null) {
         aiInitial = initial; aiRanges = question.passages; aiQuestion = question
         chat = ChatSessions.open(context, book, question)
     }
     var annotation by remember { mutableStateOf<Pair<Paragraph, Int>?>(null) }
+    fun findGo(i: Int) {
+        if (findHits.isEmpty()) return
+        findIndex = ((i % findHits.size) + findHits.size) % findHits.size
+        val hit = findHits[findIndex]
+        searchHit = hit; searchJump = ReadingPosition(hit.chapter, hit.paragraph, hit.start); chapterIndex = hit.chapter
+    }
+    LaunchedEffect(findQuery, searchOpen) {
+        if (!searchOpen) { findHits = emptyList(); searchHit = null; return@LaunchedEffect }
+        findSearching = true
+        kotlinx.coroutines.delay(200)
+        findHits = withContext(Dispatchers.Default) { findInRows(rows, findQuery) }
+        findSearching = false
+        findIndex = 0
+        if (findHits.isNotEmpty()) findGo(0) else searchHit = null
+    }
     ReadingSession(book.id, trackingEnabled && !contents && !searchOpen && !notebookOpen && editing == null && !pdfOriginal)
     if (pdfOriginal) PdfOriginalDialog(book, chapterIndex) { pdfOriginal = false }
     fun cancelLookup() { generation++; request?.cancel(); request = null; loading = false }
@@ -144,6 +170,7 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
         selectingAi -> { selectingAi = false; aiPreview = emptyList(); aiRanges = emptyList() }
         selection != null -> closePanel()
         examOpen -> examOpen = false
+        searchOpen -> { searchOpen = false; findQuery = "" }
         else -> onBack()
     } }
     // Hidden system bars must not reserve empty strips. Transient bars overlay the page.
@@ -182,11 +209,14 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
                         selectingAi = false; aiPreview = emptyList(); askArticle(question)
                     } catch (e: Exception) { aiError = e.message }
                 }, onAiCancel = { selectingAi = false; aiPreview = emptyList(); aiRanges = emptyList() },
-                searchHit = searchHit, searchJump = searchJump, onSearchJumpDone = { searchJump = null },
+                searchHit = searchHit, searchJump = searchJump, onSearchJumpDone = { searchJump = null }, searchAll = findHits,
                 onAskArticle = { prompt -> closePanel(); askArticle(ReadingQuestions.wholeArticle(book), prompt) }, onExam = { closePanel(); examOpen = true },
                 exam = exam, examActive = examOpen, onClozeBlank = { n -> closePanel(); exam?.goTo(n); examOpen = true })
             // Overlay instead of inserting/removing a row above the list: no text jumps on title changes.
-            androidx.compose.animation.AnimatedVisibility(chrome && !selectingAi,
+            if (searchOpen && !selectingAi) FindBar(findQuery, { findQuery = it }, findIndex, findHits.size, findSearching,
+                onPrevious = { findGo(findIndex - 1) }, onNext = { findGo(findIndex + 1) }, onList = { findList = true },
+                onClose = { searchOpen = false; findQuery = "" })
+            androidx.compose.animation.AnimatedVisibility(chrome && !selectingAi && !searchOpen,
                 enter = androidx.compose.animation.slideInVertically { -it } + androidx.compose.animation.fadeIn(),
                 exit = androidx.compose.animation.slideOutVertically { -it } + androidx.compose.animation.fadeOut()) {
             Surface(modifier = Modifier.pointerInput(Unit) { detectTapGestures(onTap = {}) },
@@ -299,9 +329,10 @@ internal fun Reader(book: Book, store: LibraryStore, settings: ReaderSettings, o
             }
         }
     }
-    if (searchOpen) ReaderSearch(book, rows, onDismiss = { searchOpen = false }, onPick = { hit ->
-        searchHit = hit; searchJump = ReadingPosition(hit.chapter, hit.paragraph, hit.start)
-        chapterIndex = hit.chapter; searchOpen = false; chrome = true
+    if (findList) ReaderSearch(book, rows, initialQuery = findQuery, onDismiss = { findList = false }, onPick = { hit ->
+        val i = findHits.indexOf(hit)
+        if (i >= 0) findGo(i) else { searchHit = hit; searchJump = ReadingPosition(hit.chapter, hit.paragraph, hit.start); chapterIndex = hit.chapter }
+        findList = false
     })
     editing?.let { (ci, ranges) -> TranslationEditor(book, ci, ranges, onDismiss = { editing = null }, onSave = { updated ->
         onUpdate(updated)
@@ -317,7 +348,7 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
     onAnnotation: (Paragraph, Int) -> Unit,
     selectingAi: Boolean, aiRanges: List<PassageRange>, onAiPreview: (List<PassageRange>) -> Unit,
     onAiPicked: (List<PassageRange>) -> Unit, onAiCancel: () -> Unit,
-    searchHit: PassageRange?, searchJump: ReadingPosition?, onSearchJumpDone: () -> Unit,
+    searchHit: PassageRange?, searchJump: ReadingPosition?, onSearchJumpDone: () -> Unit, searchAll: List<PassageRange> = emptyList(),
     onAskArticle: (String?) -> Unit = {}, onExam: () -> Unit = {},
     exam: ExamState? = null, examActive: Boolean = false, onClozeBlank: (Int) -> Unit = {}) {
     val passageLayouts = remember { mutableStateMapOf<String, PassageLayout>() }
@@ -470,8 +501,10 @@ private fun ContinuousParagraphs(book: Book, rows: List<ReadingRow>, list: LazyL
             val annotated = AnnotatedString.Builder(p.text).apply {
                 p.marks.forEach { m -> addStyle(if (m.kind == "italic") SpanStyle(fontStyle = FontStyle.Italic) else SpanStyle(fontWeight = FontWeight.Bold), m.start, m.end) }
                 p.annotations.forEach { note -> addStyle(SpanStyle(color = MaterialTheme.colorScheme.primary, textDecoration = TextDecoration.Underline), note.start, note.end) }
+                searchAll.forEach { h -> if (h.chapter == row.chapter && h.paragraph == row.paragraphIndex && h != searchHit)
+                    addStyle(SpanStyle(background = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = .45f)), h.start, h.end) }
                 searchHit?.takeIf { it.chapter == row.chapter && it.paragraph == row.paragraphIndex }?.let {
-                    addStyle(SpanStyle(background = MaterialTheme.colorScheme.tertiaryContainer), it.start, it.end)
+                    addStyle(SpanStyle(background = MaterialTheme.colorScheme.primary.copy(alpha = .32f), fontWeight = FontWeight.SemiBold), it.start, it.end)
                 }
                 highlight.forEach { addStyle(SpanStyle(background = MaterialTheme.colorScheme.primaryContainer), it.start, it.end) }
                 // Cloze blanks are drawn as inline boxes over the underscores, so text offsets stay unchanged.

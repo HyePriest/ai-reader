@@ -79,8 +79,10 @@ private fun LeadImage(id: String, modifier: Modifier) {
         value = withContext(Dispatchers.IO) { if (covers.file(id).exists()) covers.load(id)?.asImageBitmap() else null }
     }
     image?.let {
-        val ratio = (it.width.toFloat() / it.height.coerceAtLeast(1)).coerceIn(1.2f, 2f)
-        Image(it, contentDescription = null, contentScale = ContentScale.Crop,
+        // Wide photos fill the column; tall pictures such as cartoons are shown whole.
+        val real = it.width.toFloat() / it.height.coerceAtLeast(1)
+        val ratio = real.coerceIn(.62f, 2f)
+        Image(it, contentDescription = null, contentScale = if (real in .62f..2f) ContentScale.Fit else ContentScale.Crop,
             modifier = modifier.fillMaxWidth().aspectRatio(ratio).clip(RoundedCornerShape(6.dp)).testTag("lead-image"))
     }
 }
@@ -92,7 +94,15 @@ internal fun ArticleFooter(book: Book, modifier: Modifier = Modifier, onAsk: (St
         Text("■", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
         Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(if (book.questions.isNotEmpty()) "读完了，开始做题吧" else "读完了", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                val context = LocalContext.current.applicationContext
+                val marks = remember { ReadingMarks(context) }
+                var starred by remember(book.id) { mutableStateOf(marks.favorite(book.id)) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (book.questions.isNotEmpty()) "读完了，开始做题吧" else "读完了", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { starred = !starred; marks.setFavorite(book.id, starred) }, modifier = Modifier.testTag("favorite-article")) {
+                        Text(if (starred) "★ 已收藏" else "☆ 收藏")
+                    }
+                }
                 if (book.questions.isNotEmpty()) Button(onClick = onExam, modifier = Modifier.fillMaxWidth().testTag("footer-exam")) { Text("做题 · ${book.questions.size} 道") }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { onAsk("全文大意是什么？") }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 8.dp)) { Text("全文大意", maxLines = 1) }

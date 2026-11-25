@@ -62,6 +62,9 @@ class LibraryStore(private val context: Context) {
         else if (bytes.isNotEmpty() && bytes.size < 2 * 1024 * 1024 && !bytes.take(5).toByteArray().toString(Charsets.US_ASCII).startsWith("%PDF")) {
             val text = DocumentImporter.decode(bytes)
             if (ExamPaper.looksLike(text)) return ImportResult.Issue(ExamPaper.read(text))
+            val name = fileName(uri)
+            if (name.endsWith(".md", true) || name.endsWith(".markdown", true))
+                return ImportResult.Single(Articles.fromText(Articles.stripMarkdown(text), source = name))
         }
         return ImportResult.Single(importBytes(bytes, fileName(uri)))
     }
@@ -81,6 +84,7 @@ class LibraryStore(private val context: Context) {
         preferences.edit().remove("$id.chapter").remove("$id.paragraph").remove("$id.character").apply()
         runCatching { BookCovers(context).remove(id) }
         ChatStore(context).clear(id)
+        ReadingMarks(context).forget(id)
     }
 
     private fun importBytes(bytes: ByteArray, name: String): Book {
